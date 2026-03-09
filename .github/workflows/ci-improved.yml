@@ -1,4 +1,4 @@
-name: Lint and Test
+name: CI (Improved)
 
 on:
   push:
@@ -43,18 +43,14 @@ jobs:
     - name: Install project
       run: poetry install --no-interaction
 
-    - name: Lint with ruff (main rules only)
-      run: |
-        poetry run ruff check src/ tests/
-        echo "✓ Ruff linting passed"
+    - name: Lint with ruff
+      run: poetry run ruff check src/ tests/
 
-    - name: Check code formatting with black
-      run: |
-        poetry run black --check src/ tests/
-        echo "✓ Black formatting check passed"
+    - name: Check formatting with black
+      run: poetry run black --check src/ tests/
 
   test:
-    name: Run Tests
+    name: Run Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
 
     strategy:
@@ -93,11 +89,10 @@ jobs:
     - name: Install project
       run: poetry install --no-interaction
 
-    - name: Run tests with pytest
-      run: |
-        poetry run pytest -v --cov=kbcraft --cov-report=term --cov-report=xml
+    - name: Run tests
+      run: poetry run pytest -v --cov=kbcraft --cov-report=term --cov-report=xml
 
-    - name: Upload coverage report
+    - name: Upload coverage
       if: matrix.python-version == '3.12'
       uses: codecov/codecov-action@v4
       with:
@@ -133,6 +128,5 @@ jobs:
     - name: Run validation script
       run: poetry run python validate_setup.py
 
-    - name: All checks passed
-      run: |
-        echo "✓ All CI checks passed successfully!"
+    - name: Success message
+      run: echo "✅ All CI checks passed!"

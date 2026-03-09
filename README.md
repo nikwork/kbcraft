@@ -1,5 +1,11 @@
 # kbcraft
 
+[![CI](https://github.com/yourusername/kbcraft/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kbcraft/actions/workflows/ci.yml)
+[![Lint and Test](https://github.com/yourusername/kbcraft/actions/workflows/lint-and-test.yml/badge.svg)](https://github.com/yourusername/kbcraft/actions/workflows/lint-and-test.yml)
+[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 > **Build structured, RAG-ready knowledge bases from Markdown — straight from your terminal.**
 
 `kbcraft` is a Python command-line utility for authoring, organizing, and indexing collections of Markdown files into vector stores for use in Retrieval-Augmented Generation (RAG) pipelines. It bridges the gap between human-readable documentation and machine-queryable knowledge.
@@ -14,3 +20,616 @@
 - 🗄️ **Push to vector stores** — built-in support for Chroma, Qdrant, Pinecone, and FAISS
 - 🔄 **Incremental sync** — only re-index documents that have changed
 - 🖥️ **Pure CLI** — scriptable, CI-friendly, no GUI required
+
+---
+
+## Documentation
+
+- **[Development Setup Guide](#development-setup-guide)** - Complete guide for setting up the project
+- **[Testing and CI/CD](TESTING_AND_CI.md)** - Comprehensive testing and CI/CD documentation
+- **[Project Structure](#project-structure)** - Overview of the codebase organization
+
+---
+
+## Development Setup Guide
+
+This guide walks you through setting up the kbcraft project for development on your local machine from scratch.
+
+### Prerequisites
+
+Before starting, ensure you have the following installed on your system:
+
+1. **Git** - For cloning the repository
+   ```bash
+   git --version  # Should show version 2.x or higher
+   ```
+
+2. **Python 3.8+** - The project supports Python 3.8 through 3.12
+   ```bash
+   python3 --version  # Should show 3.8 or higher
+   ```
+
+3. **pyenv** (Recommended) - For managing Python versions
+   ```bash
+   # Install on macOS/Linux
+   curl https://pyenv.run | bash
+
+   # Or on macOS with Homebrew
+   brew install pyenv
+
+   # Verify installation
+   pyenv --version
+   ```
+
+4. **Poetry** - Modern Python dependency management
+   ```bash
+   # Install Poetry
+   curl -sSL https://install.python-poetry.org | python3 -
+
+   # Or with pipx (recommended)
+   pipx install poetry
+
+   # Verify installation
+   poetry --version  # Should show 1.x or higher
+   ```
+
+### Step-by-Step Setup
+
+#### Step 1: Install Python with pyenv
+
+If you don't have Python 3.12.12 installed:
+
+```bash
+# Install Python 3.12.12
+pyenv install 3.12.12
+
+# Verify it was installed
+pyenv versions
+```
+
+#### Step 2: Clone the Repository
+
+```bash
+# Clone from your git repository
+git clone https://github.com/yourusername/kbcraft.git
+# Or if using a local path:
+git clone /path/to/kbcraft.git
+
+# Navigate to the project directory
+cd kbcraft
+
+# Verify you're in the right directory
+ls -la  # Should see pyproject.toml, src/, tests/, etc.
+```
+
+#### Step 3: Create Virtual Environment with pyenv
+
+```bash
+# Create a dedicated virtual environment for this project
+pyenv virtualenv 3.12.12 kbcraft-env
+
+# Set it as the local Python version (creates .python-version file)
+pyenv local kbcraft-env
+
+# Verify the environment is active
+python --version  # Should show Python 3.12.12
+which python      # Should point to kbcraft-env
+```
+
+#### Step 4: Install Dependencies with Poetry
+
+```bash
+# Install all project dependencies
+poetry install
+
+# This will:
+# - Create a virtual environment (if not already created by pyenv)
+# - Install all dependencies from pyproject.toml
+# - Install the kbcraft package in editable mode
+# - Install dev dependencies (pytest, black, ruff, mypy)
+```
+
+**Optional: Install with Vector Store Support**
+
+```bash
+# Install with specific vector store
+poetry install --extras "chroma"
+
+# Or install with all extras
+poetry install --all-extras
+```
+
+#### Step 5: Verify Installation
+
+**Quick Validation (Recommended):**
+
+Run the automated validation script to check all setup requirements:
+
+```bash
+poetry run python validate_setup.py
+```
+
+This script will check:
+- Module imports
+- Project structure
+- Python version
+- Development tools (pytest, black, ruff, mypy)
+
+Expected output:
+```
+============================================================
+kbcraft Development Environment Validation
+============================================================
+
+✓ Import kbcraft module
+✓ Import all submodules
+✓ Project structure is correct
+✓ pytest is installed
+✓ black is installed
+✓ ruff is installed
+✓ mypy is installed
+✓ Python version is 3.8+ (current: 3.12.12)
+
+============================================================
+Results: 8/8 checks passed
+============================================================
+
+🎉 Success! Your development environment is ready to use.
+```
+
+**Manual Validation (Optional):**
+
+If you prefer to validate manually, run these commands:
+
+**1. Check Python environment:**
+```bash
+poetry env info
+
+# Expected output should show:
+# - Python version: 3.12.12
+# - Path to virtualenv
+# - Valid: True
+```
+
+**2. Check installed package:**
+```bash
+poetry run python -c "import kbcraft; print(kbcraft.__version__)"
+
+# Expected output: 0.1.0
+```
+
+**3. Test CLI command:**
+```bash
+poetry run kbcraft --help
+
+# Should run without errors (even if output is empty for now)
+```
+
+**4. Verify module imports:**
+```bash
+poetry run python -c "
+import kbcraft
+from kbcraft import cli, scaffold, organize, chunker, embedder, sync, utils
+from kbcraft.vector_stores import chroma, qdrant, pinecone, faiss
+print('✓ All modules imported successfully')
+"
+
+# Expected output: ✓ All modules imported successfully
+```
+
+**5. Check development tools:**
+```bash
+# Test pytest
+poetry run pytest --version
+
+# Test black
+poetry run black --version
+
+# Test ruff
+poetry run ruff --version
+
+# Test mypy
+poetry run mypy --version
+```
+
+#### Step 6: Run Tests
+
+```bash
+# Run the test suite
+poetry run pytest
+
+# Expected output:
+# - Tests should be collected (even if there are no tests yet)
+# - No import errors
+# - Exit code 0 or 5 (no tests collected)
+```
+
+#### Step 7: Run Code Quality Checks
+
+```bash
+# Format code with black
+poetry run black .
+
+# Lint with ruff
+poetry run ruff check .
+
+# Type check with mypy
+poetry run mypy src/kbcraft
+
+# All commands should complete without critical errors
+```
+
+### Validation Checklist
+
+**Quick Check:**
+
+Run the validation script and ensure all checks pass:
+
+```bash
+poetry run python validate_setup.py
+```
+
+You should see: `Results: 8/8 checks passed` and `🎉 Success!`
+
+**Detailed Checklist:**
+
+If you prefer manual validation, use this checklist:
+
+- [ ] Git repository cloned successfully
+- [ ] Python 3.12.12 installed via pyenv
+- [ ] Virtual environment `kbcraft-env` created and active
+- [ ] Poetry installed and accessible
+- [ ] `poetry install` completed without errors
+- [ ] `poetry env info` shows correct Python version and valid environment
+- [ ] `poetry run python -c "import kbcraft; print(kbcraft.__version__)"` prints `0.1.0`
+- [ ] `poetry run kbcraft --help` runs without import errors
+- [ ] All modules can be imported without errors
+- [ ] Dev tools (pytest, black, ruff, mypy) are installed and working
+- [ ] `poetry run pytest` runs without import errors
+- [ ] Code formatting and linting tools work
+- [ ] **OR** validation script passes with 8/8 checks ✓
+
+### Troubleshooting
+
+#### Issue: `poetry install` fails with "pyenv: python: command not found"
+
+**Solution:**
+```bash
+# Ensure pyenv is properly initialized in your shell
+# Add to ~/.bashrc or ~/.zshrc:
+export PATH="$HOME/.pyenv/bin:$PATH"
+eval "$(pyenv init -)"
+eval "$(pyenv virtualenv-init -)"
+
+# Reload shell configuration
+source ~/.bashrc  # or source ~/.zshrc
+```
+
+#### Issue: "No module named 'kbcraft'"
+
+**Solution:**
+```bash
+# Reinstall the package
+poetry install
+
+# Or ensure you're using poetry run
+poetry run python -c "import kbcraft"
+```
+
+#### Issue: Poetry creates its own virtualenv instead of using pyenv
+
+**Solution:**
+```bash
+# Configure Poetry to create virtualenvs in the project directory
+poetry config virtualenvs.in-project false
+poetry config virtualenvs.prefer-active-python true
+
+# Remove existing virtualenv and reinstall
+poetry env remove python
+poetry install
+```
+
+#### Issue: Permission denied when installing Poetry
+
+**Solution:**
+```bash
+# Use pipx instead
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+pipx install poetry
+```
+
+#### Issue: Tests fail to run
+
+**Solution:**
+```bash
+# Verify pytest is installed
+poetry show pytest
+
+# Reinstall dev dependencies
+poetry install --with dev
+```
+
+### Next Steps
+
+Once your environment is validated and ready:
+
+1. **Activate the virtual environment:**
+   ```bash
+   poetry shell
+   ```
+
+2. **Start coding:**
+   - Implement features in `src/kbcraft/`
+   - Write tests in `tests/`
+   - Run tests frequently with `pytest`
+
+3. **Before committing:**
+   ```bash
+   poetry run black .           # Format code
+   poetry run ruff check .      # Lint code
+   poetry run mypy src/kbcraft  # Type check
+   poetry run pytest            # Run tests
+   ```
+
+4. **Useful commands during development:**
+   ```bash
+   poetry add <package>         # Add a new dependency
+   poetry add --group dev <pkg> # Add a dev dependency
+   poetry update                # Update dependencies
+   poetry show --tree           # Show dependency tree
+   ```
+
+---
+
+## Installation
+
+### Using Poetry (Recommended)
+
+**1. Clone the repository:**
+```bash
+git clone /path/to/kbcraft.git
+cd kbcraft
+```
+
+**2. Set up Python environment with pyenv (optional but recommended):**
+```bash
+# Create a dedicated virtual environment
+pyenv virtualenv 3.12.12 kbcraft-env
+
+# Set it as the local Python version for this project
+pyenv local kbcraft-env
+```
+
+**3. Install with Poetry:**
+```bash
+# Install all dependencies (will create a virtual environment automatically)
+poetry install
+
+# Install with specific vector store extras
+poetry install --extras "chroma"
+poetry install --extras "qdrant"
+poetry install --extras "pinecone"
+poetry install --extras "faiss"
+
+# Install with all extras
+poetry install --all-extras
+```
+
+**4. Run commands:**
+```bash
+# Activate the virtual environment
+poetry shell
+
+# Or run commands directly
+poetry run kbcraft --help
+
+# Import the module
+poetry run python -c "import kbcraft; print(kbcraft.__version__)"
+```
+
+**5. Development commands:**
+```bash
+poetry run pytest              # Run tests
+poetry run black .             # Format code
+poetry run ruff check .        # Lint code
+poetry run mypy kbcraft        # Type check
+```
+
+### Using pip
+
+**1. Clone the repository:**
+```bash
+git clone /path/to/kbcraft.git
+cd kbcraft
+```
+
+**2. Create and activate virtual environment:**
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+**3. Install in development mode:**
+```bash
+# Basic installation
+pip install -e .
+
+# Install with dev tools (pytest, black, ruff, mypy)
+pip install -e ".[dev]"
+
+# Install with vector store support
+pip install -e ".[chroma]"     # ChromaDB
+pip install -e ".[qdrant]"     # Qdrant
+pip install -e ".[pinecone]"   # Pinecone
+pip install -e ".[faiss]"      # FAISS
+```
+
+**5. Install directly from local git repo (without cloning):**
+```bash
+# Install from local path
+pip install git+file:///path/to/kbcraft.git
+
+# Install in editable mode from local path
+pip install -e git+file:///path/to/kbcraft.git#egg=kbcraft
+```
+
+**6. Verify installation:**
+```bash
+kbcraft --help
+```
+
+### Development Commands
+
+**Using Poetry:**
+```bash
+poetry install                  # Install package with dependencies
+poetry install --with dev       # Install with dev dependencies
+poetry run pytest               # Run tests
+poetry run ruff check .         # Run linting
+poetry run mypy kbcraft         # Run type checking
+poetry run black .              # Format code
+poetry shell                    # Activate virtual environment
+poetry env info                 # Show environment info
+```
+
+**Using Make:**
+```bash
+make install    # Install package
+make dev        # Install with dev dependencies
+make test       # Run tests
+make lint       # Run linting (ruff + mypy)
+make format     # Format code (black + ruff)
+make clean      # Clean build artifacts
+```
+
+---
+
+## Project Structure
+
+```
+kbcraft/
+├── src/kbcraft/              # Main source code directory
+│   ├── __init__.py          # Package initialization
+│   ├── cli.py               # Command-line interface entry point
+│   ├── scaffold.py          # Scaffolding for generating .md files
+│   ├── organize.py          # Organization and validation logic
+│   ├── chunker.py           # Document chunking functionality
+│   ├── embedder.py          # Embedding generation
+│   ├── sync.py              # Incremental sync functionality
+│   ├── utils.py             # Utility functions
+│   └── vector_stores/       # Vector store integrations
+│       ├── __init__.py
+│       ├── chroma.py        # ChromaDB integration
+│       ├── qdrant.py        # Qdrant integration
+│       ├── pinecone.py      # Pinecone integration
+│       └── faiss.py         # FAISS integration
+├── tests/                   # Test suite
+│   ├── __init__.py
+│   ├── test_scaffold.py
+│   ├── test_chunker.py
+│   └── test_embedder.py
+├── pyproject.toml           # Modern Python package configuration (Poetry)
+├── poetry.lock              # Lock file for exact dependency versions
+├── validate_setup.py        # Environment validation script
+├── requirements.txt         # Python dependencies (legacy support)
+├── Makefile                 # Development commands
+├── MANIFEST.in              # Package manifest
+├── .gitignore               # Git ignore patterns
+├── .python-version          # pyenv Python version file
+├── .github/workflows/       # GitHub Actions CI/CD workflows
+│   ├── ci.yml              # Comprehensive CI pipeline
+│   └── lint-and-test.yml   # Lint and test workflow
+├── TESTING_AND_CI.md        # Testing and CI/CD documentation
+├── CI_SETUP.md              # CI setup summary
+└── README.md                # This file
+```
+
+---
+
+## Continuous Integration (CI)
+
+> **📖 For comprehensive testing and CI/CD documentation, see [TESTING_AND_CI.md](TESTING_AND_CI.md)**
+
+The project uses GitHub Actions for automated testing and code quality checks.
+
+### CI Pipeline
+
+The CI pipeline runs automatically on:
+- Push to `main` branch
+- Pull requests to `main` branch
+- Manual workflow dispatch
+
+### Workflow Jobs
+
+**1. Lint Job** - Code Quality Checks
+- Runs ruff linter with main rules (E, F, W)
+- Checks code formatting with black
+- Runs on Python 3.12
+
+**2. Test Job** - Unit Tests
+- Runs pytest with coverage reporting
+- Tests on multiple Python versions: 3.8, 3.9, 3.10, 3.11, 3.12
+- Uploads coverage report to Codecov (Python 3.12 only)
+
+**3. Validate Job** - Environment Validation
+- Runs the validation script
+- Confirms all checks pass
+- Runs after lint and test jobs complete
+
+### Running CI Checks Locally
+
+Before pushing code, run the same checks locally:
+
+```bash
+# Run linting
+poetry run ruff check src/ tests/
+
+# Check formatting
+poetry run black --check src/ tests/
+
+# Auto-fix issues
+poetry run ruff check --fix src/ tests/
+poetry run black src/ tests/
+
+# Run tests
+poetry run pytest -v --cov=kbcraft
+
+# Run validation
+poetry run python validate_setup.py
+```
+
+### CI Configuration Files
+
+- `.github/workflows/ci.yml` - Main CI pipeline with matrix testing
+- `.github/workflows/lint-and-test.yml` - Simplified lint and test workflow
+
+### Linting Rules
+
+The project uses **main rules only** for ruff:
+- **E** - pycodestyle errors
+- **F** - pyflakes (undefined names, unused imports)
+- **W** - pycodestyle warnings
+
+To see all linting issues:
+```bash
+poetry run ruff check src/ tests/
+```
+
+To auto-fix linting issues:
+```bash
+poetry run ruff check --fix src/ tests/
+```
+
+### Code Coverage
+
+Test coverage is tracked and reported in CI. To generate a local coverage report:
+
+```bash
+# Terminal report
+poetry run pytest --cov=kbcraft --cov-report=term-missing
+
+# HTML report
+poetry run pytest --cov=kbcraft --cov-report=html
+open htmlcov/index.html
+```

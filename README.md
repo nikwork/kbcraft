@@ -158,7 +158,7 @@ Pass it to the CLI with `--kbignore .kbignore`, or load it in Python with `FileF
 ## Documentation
 
 - **[Development Setup Guide](#development-setup-guide)** - Complete guide for setting up the project
-- **[Testing and CI/CD](TESTING_AND_CI.md)** - Comprehensive testing and CI/CD documentation
+- **[Testing and CI/CD](kb/TESTING_AND_CI.md)** - Comprehensive testing and CI/CD documentation
 - **[Project Structure](#project-structure)** - Overview of the codebase organization
 
 ---
@@ -672,8 +672,12 @@ kbcraft/
 ├── .github/workflows/       # GitHub Actions CI/CD workflows
 │   ├── ci.yml              # Comprehensive CI pipeline
 │   └── lint-and-test.yml   # Lint and test workflow
-├── TESTING_AND_CI.md        # Testing and CI/CD documentation
-├── CI_SETUP.md              # CI setup summary
+├── kb/                      # Knowledge base (CI guides, troubleshooting)
+│   ├── TESTING_AND_CI.md   # Testing and CI/CD documentation
+│   ├── CI_SETUP.md         # CI setup summary
+│   ├── CI_FIXES.md         # CI fixes log
+│   ├── CI_QUICK_REFERENCE.md  # CI quick reference card
+│   └── TROUBLESHOOTING_CI.md  # CI troubleshooting guide
 └── README.md                # This file
 ```
 
@@ -681,7 +685,7 @@ kbcraft/
 
 ## Continuous Integration (CI)
 
-> **📖 For comprehensive testing and CI/CD documentation, see [TESTING_AND_CI.md](TESTING_AND_CI.md)**
+> **📖 For comprehensive testing and CI/CD documentation, see [TESTING_AND_CI.md](kb/TESTING_AND_CI.md)**
 
 The project uses GitHub Actions for automated testing and code quality checks.
 

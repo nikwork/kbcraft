@@ -151,7 +151,7 @@ poetry run pytest -v -s
 
 ## 📖 More Info
 
-See [TESTING_AND_CI.md](../TESTING_AND_CI.md) for comprehensive documentation.
+See [TESTING_AND_CI.md](TESTING_AND_CI.md) for comprehensive documentation.
 
 ---
 

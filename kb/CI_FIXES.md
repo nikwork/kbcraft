@@ -313,7 +313,7 @@ git push origin main
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [Poetry Documentation](https://python-poetry.org/docs/)
 - [snok/install-poetry Action](https://github.com/snok/install-poetry)
-- [Project Troubleshooting Guide](.github/TROUBLESHOOTING_CI.md)
+- [Project Troubleshooting Guide](TROUBLESHOOTING_CI.md)
 - [Testing Documentation](TESTING_AND_CI.md)
 
 ---

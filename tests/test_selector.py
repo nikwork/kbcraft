@@ -1,5 +1,5 @@
 """
-Tests for FileFilter in organize.py.
+Tests for FileFilter in selector.py.
 """
 
 import textwrap
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from kbcraft.organize import LANGUAGE_PRESETS, FileFilter
+from kbcraft.selector import LANGUAGE_PRESETS, FileFilter
 
 
 # ---------------------------------------------------------------------------

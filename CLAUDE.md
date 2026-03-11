@@ -43,7 +43,7 @@ Make targets are available (`make test`, `make lint`, `make format`, `make clean
 src/kbcraft/
   cli.py          # CLI entry point (main())
   scaffold.py     # Generate .md file sets from templates/outlines
-  organize.py     # Validate frontmatter, naming, directory layout
+  selector.py     # Select files for ingestion (FileFilter, LANGUAGE_PRESETS)
   chunker.py      # Split docs into chunks
   embedder.py     # Generate vector embeddings from chunks
   sync.py         # Incremental re-indexing (diff-based)

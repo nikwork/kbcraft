@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from kbcraft.organize import LANGUAGE_PRESETS, FileFilter
+from kbcraft.selector import LANGUAGE_PRESETS, FileFilter
 
 
 def _build_parser() -> argparse.ArgumentParser:

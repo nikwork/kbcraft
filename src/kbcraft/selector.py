@@ -1,7 +1,8 @@
 """
-Organization and validation of knowledge base files.
+File selection for knowledge base ingestion.
 
-Enforces consistent frontmatter, naming conventions, and directory layout.
+Determines which files from a project are collected for chunking, embedding,
+and insertion into a vector store.
 """
 
 import fnmatch

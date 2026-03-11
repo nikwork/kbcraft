@@ -2,7 +2,6 @@
 Tests for FileFilter in selector.py.
 """
 
-import textwrap
 from pathlib import Path
 
 import pytest

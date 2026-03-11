@@ -8,7 +8,7 @@ from kbcraft import scaffold
 
 def test_kbcraft_version():
     """Test that kbcraft has a version."""
-    assert kbcraft.__version__ == "0.1.0"
+    assert kbcraft.__version__ == "0.1.1"
 
 
 def test_scaffold_module_exists():

@@ -6,4 +6,4 @@ collections of Markdown files into vector stores for use in
 Retrieval-Augmented Generation (RAG) pipelines.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

@@ -127,13 +127,18 @@ class TestShouldInclude:
         p = tmp_path / "node_modules" / "readme.md"
         p.parent.mkdir()
         p.touch()
-        assert self._f(include=["**/*.md"], exclude=["node_modules/"]).should_include(p, tmp_path) is False
+        assert (
+            self._f(include=["**/*.md"], exclude=["node_modules/"]).should_include(p, tmp_path)
+            is False
+        )
 
     def test_non_excluded_file_still_included(self, tmp_path):
         p = tmp_path / "docs" / "guide.md"
         p.parent.mkdir()
         p.touch()
-        assert self._f(include=["**/*.md"], exclude=["drafts/**"]).should_include(p, tmp_path) is True
+        assert (
+            self._f(include=["**/*.md"], exclude=["drafts/**"]).should_include(p, tmp_path) is True
+        )
 
 
 # ---------------------------------------------------------------------------

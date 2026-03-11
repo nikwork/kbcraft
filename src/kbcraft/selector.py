@@ -23,10 +23,10 @@ def _compile_glob(pattern: str) -> re.Pattern:
     parts = []
     i = 0
     while i < len(pattern):
-        if pattern[i: i + 3] == "**/":
+        if pattern[i : i + 3] == "**/":
             parts.append("(?:.*/)?")  # zero or more dir segments
             i += 3
-        elif pattern[i: i + 2] == "**":
+        elif pattern[i : i + 2] == "**":
             parts.append(".*")
             i += 2
         elif pattern[i] == "*":
@@ -48,27 +48,27 @@ def _compile_glob(pattern: str) -> re.Pattern:
 #: Glob patterns for each supported language/file-type preset.
 #: Use ``FileFilter.from_presets()`` to build a filter from one or more names.
 LANGUAGE_PRESETS: Dict[str, List[str]] = {
-    "markdown":   ["**/*.md", "**/*.mdx"],
-    "python":     ["**/*.py"],
+    "markdown": ["**/*.md", "**/*.mdx"],
+    "python": ["**/*.py"],
     "javascript": ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
     "typescript": ["**/*.ts", "**/*.tsx"],
-    "shell":      ["**/*.sh", "**/*.bash", "**/*.zsh", "**/*.fish"],
-    "go":         ["**/*.go"],
-    "rust":       ["**/*.rs"],
-    "java":       ["**/*.java"],
-    "c":          ["**/*.c", "**/*.h"],
-    "cpp":        ["**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.hpp", "**/*.hxx"],
-    "ruby":       ["**/*.rb"],
-    "php":        ["**/*.php"],
-    "swift":      ["**/*.swift"],
-    "kotlin":     ["**/*.kt", "**/*.kts"],
-    "scala":      ["**/*.scala"],
-    "yaml":       ["**/*.yaml", "**/*.yml"],
-    "toml":       ["**/*.toml"],
-    "json":       ["**/*.json"],
-    "html":       ["**/*.html", "**/*.htm"],
-    "css":        ["**/*.css", "**/*.scss", "**/*.sass", "**/*.less"],
-    "sql":        ["**/*.sql"],
+    "shell": ["**/*.sh", "**/*.bash", "**/*.zsh", "**/*.fish"],
+    "go": ["**/*.go"],
+    "rust": ["**/*.rs"],
+    "java": ["**/*.java"],
+    "c": ["**/*.c", "**/*.h"],
+    "cpp": ["**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.hpp", "**/*.hxx"],
+    "ruby": ["**/*.rb"],
+    "php": ["**/*.php"],
+    "swift": ["**/*.swift"],
+    "kotlin": ["**/*.kt", "**/*.kts"],
+    "scala": ["**/*.scala"],
+    "yaml": ["**/*.yaml", "**/*.yml"],
+    "toml": ["**/*.toml"],
+    "json": ["**/*.json"],
+    "html": ["**/*.html", "**/*.htm"],
+    "css": ["**/*.css", "**/*.scss", "**/*.sass", "**/*.less"],
+    "sql": ["**/*.sql"],
 }
 
 
@@ -135,10 +135,7 @@ class FileFilter:
         unknown = [p for p in presets if p not in LANGUAGE_PRESETS]
         if unknown:
             available = ", ".join(sorted(LANGUAGE_PRESETS))
-            raise ValueError(
-                f"Unknown preset(s): {', '.join(unknown)}. "
-                f"Available: {available}"
-            )
+            raise ValueError(f"Unknown preset(s): {', '.join(unknown)}. " f"Available: {available}")
 
         include_patterns: List[str] = []
         for name in presets:

@@ -14,16 +14,9 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
-    # GPU support — remove the `deploy` block if you don't have an NVIDIA GPU
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
-  # ── Pull nomic-embed-text once, then exit ─────────────────────────────────
+  # ── Pull all-minilm once, then exit ──────────────────────────────────────
+  # all-minilm: 384 dims, ~22 MB — lightest CPU-friendly embedding model.
   # Re-runs on `docker compose up` but `ollama pull` is a no-op when the
   # model is already present in the shared volume.
   ollama-pull:
@@ -35,7 +28,7 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
     entrypoint: >
-      sh -c "ollama pull nomic-embed-text && echo 'Model ready.'"
+      sh -c "ollama pull all-minilm && echo 'Model ready.'"
     restart: "no"
 
   # ── kbcraft application ────────────────────────────────────────────────────

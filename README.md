@@ -23,6 +23,138 @@
 
 ---
 
+## File Selector
+
+`selector.py` is the component responsible for deciding **which files from a project get collected** for chunking, embedding, and insertion into a vector store. It is always the first step in the ingestion pipeline.
+
+### Language presets
+
+Twenty built-in presets cover the most common file types. Combine as many as you need:
+
+| Preset | Extensions |
+|---|---|
+| `markdown` | `.md`, `.mdx` |
+| `python` | `.py` |
+| `javascript` | `.js`, `.jsx`, `.mjs`, `.cjs` |
+| `typescript` | `.ts`, `.tsx` |
+| `shell` | `.sh`, `.bash`, `.zsh`, `.fish` |
+| `go` | `.go` |
+| `rust` | `.rs` |
+| `java` | `.java` |
+| `c` / `cpp` | `.c`, `.h` / `.cpp`, `.hpp`, … |
+| `ruby` | `.rb` |
+| `sql` | `.sql` |
+| `yaml` / `toml` / `json` | config & data files |
+| `html` / `css` | web assets |
+
+List all presets and their exact patterns:
+
+```bash
+kbcraft presets
+```
+
+### CLI usage
+
+```bash
+# Default — collect all Markdown files
+kbcraft collect ./docs
+
+# Python project — source and shell scripts, skip tests and caches
+kbcraft collect ./myproject \
+  --lang python \
+  --lang shell \
+  --exclude 'tests/**' \
+  --exclude '__pycache__/**'
+
+# Python + Markdown docs, exclude private files and drafts
+kbcraft collect ./myproject \
+  --lang python \
+  --lang markdown \
+  --exclude '_*' \
+  --exclude 'drafts/**'
+
+# Add a custom extension on top of a preset
+kbcraft collect ./myproject --lang markdown --include '**/*.rst'
+
+# Use a .kbignore file for persistent exclude rules
+kbcraft collect ./myproject --lang python --kbignore .kbignore
+```
+
+### Python API
+
+```python
+from kbcraft.selector import FileFilter, LANGUAGE_PRESETS
+
+# --- Preset-based (recommended) ---
+
+# Single language
+f = FileFilter.from_presets(["python"])
+
+# Multiple languages combined
+f = FileFilter.from_presets(["python", "shell", "markdown"])
+
+# With excludes
+f = FileFilter.from_presets(
+    ["python", "javascript"],
+    exclude_patterns=["tests/**", "node_modules/", "__pycache__/"],
+)
+
+files = f.collect_files("./myproject")
+for path in files:
+    print(path)
+
+# --- Custom glob patterns ---
+
+f = FileFilter(
+    include_patterns=["**/*.py", "**/*.md", "**/*.rst"],
+    exclude_patterns=["drafts/**", "_*"],
+)
+files = f.collect_files("./myproject")
+
+# --- .kbignore file ---
+
+# Reads exclude patterns from .kbignore (gitignore-style)
+f = FileFilter.from_kbignore(
+    ".kbignore",
+    include_patterns=FileFilter.from_presets(["python"]).include_patterns,
+)
+files = f.collect_files("./myproject")
+
+# --- Check a single file ---
+
+f = FileFilter.from_presets(["python"])
+from pathlib import Path
+root = Path("./myproject").resolve()
+print(f.should_include(root / "src/main.py", root))   # True
+print(f.should_include(root / "tests/test_main.py", root))  # True (not excluded)
+```
+
+### .kbignore file
+
+Place a `.kbignore` file in your project root to permanently record which paths to skip. The format is identical to `.gitignore`:
+
+```
+# Ignore generated and cache directories
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+*.pyc
+
+# Ignore drafts and private files
+drafts/**
+_*
+
+# Ignore test fixtures
+tests/fixtures/**
+
+# Un-ignore a specific file (! prefix removes an earlier exclude)
+!drafts/approved.md
+```
+
+Pass it to the CLI with `--kbignore .kbignore`, or load it in Python with `FileFilter.from_kbignore(".kbignore")`.
+
+---
+
 ## Documentation
 
 - **[Development Setup Guide](#development-setup-guide)** - Complete guide for setting up the project
@@ -513,7 +645,7 @@ kbcraft/
 │   ├── __init__.py          # Package initialization
 │   ├── cli.py               # Command-line interface entry point
 │   ├── scaffold.py          # Scaffolding for generating .md files
-│   ├── organize.py          # Organization and validation logic
+│   ├── selector.py          # File selection for vector store ingestion
 │   ├── chunker.py           # Document chunking functionality
 │   ├── embedder.py          # Embedding generation
 │   ├── sync.py              # Incremental sync functionality

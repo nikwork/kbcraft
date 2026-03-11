@@ -35,10 +35,10 @@ class TestModuleImports:
         assert scaffold is not None
 
     def test_import_organize(self):
-        """Test organize module import."""
-        from kbcraft import organize
+        """Test selector module import."""
+        from kbcraft import selector
 
-        assert organize is not None
+        assert selector is not None
 
     def test_import_chunker(self):
         """Test chunker module import."""

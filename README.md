@@ -155,6 +155,245 @@ Pass it to the CLI with `--kbignore .kbignore`, or load it in Python with `FileF
 
 ---
 
+## Running with Docker Compose
+
+The Docker Compose setup starts a local [Ollama](https://ollama.com) inference server alongside the kbcraft application container. No Python ML dependencies or GPU required — Ollama handles all embedding inference as a REST service.
+
+### Services
+
+| Service | Image | Role |
+|---|---|---|
+| `ollama` | `ollama/ollama:latest` | Embedding inference server on port `11434` |
+| `ollama-pull` | `ollama/ollama:latest` | One-shot init: pulls `all-minilm`, then exits |
+| `kbcraft` | local build | kbcraft app, starts after Ollama healthcheck passes |
+
+**Default model: `all-minilm`** — 384 dimensions, ~22 MB, fast on CPU. See [Switching the embedding model](#switching-the-embedding-model) to use a heavier model.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) ≥ 24
+- [Docker Compose](https://docs.docker.com/compose/) ≥ 2 (included in Docker Desktop)
+
+### Quick start
+
+**1. Start all services:**
+
+```bash
+docker compose up -d
+```
+
+On first run this builds the kbcraft image and pulls `all-minilm` (~22 MB). Subsequent starts reuse the cached image and model volume.
+
+**2. Watch the model pull finish:**
+
+```bash
+docker compose logs -f ollama-pull
+# → Model ready.
+```
+
+**3. Verify all services are running:**
+
+```bash
+docker compose ps
+```
+
+Expected output:
+
+```
+NAME                    STATUS
+kbcraft-ollama          running (healthy)
+kbcraft-ollama-pull     exited (0)
+kbcraft-app             running
+```
+
+**4. Check the kbcraft CLI:**
+
+```bash
+docker compose run kbcraft kbcraft --help
+```
+
+**5. Stop everything:**
+
+```bash
+docker compose down
+```
+
+> Pulled models are stored in the `ollama-models` Docker volume and survive `down`. Run `docker compose down -v` to also delete the volume.
+
+---
+
+## Testing OllamaEmbedder
+
+### Run the smoke test (via Docker Compose)
+
+After `docker compose up -d`, run the full smoke test against the live Ollama server:
+
+```bash
+docker compose run kbcraft python scripts/test_ollama.py
+```
+
+Expected output:
+
+```
+============================================================
+  kbcraft — OllamaEmbedder smoke test
+============================================================
+  Ollama host : http://ollama:11434
+  Model       : all-minilm
+
+────────────────────────────────────────────────────────────
+  1. Embedding dimension
+────────────────────────────────────────────────────────────
+  ✓  embedding_dim == 384
+
+────────────────────────────────────────────────────────────
+  2. encode() — plain batch
+────────────────────────────────────────────────────────────
+  ✓  returns 3 vectors
+  ✓  each vector has 384 dims
+  ✓  all values are floats
+
+────────────────────────────────────────────────────────────
+  3. encode_query()
+────────────────────────────────────────────────────────────
+  ✓  returns a single vector
+  ✓  has 384 dims
+
+────────────────────────────────────────────────────────────
+  4. encode_documents()
+────────────────────────────────────────────────────────────
+  ✓  returns 2 vectors
+  ✓  each has 384 dims
+
+────────────────────────────────────────────────────────────
+  5. Semantic similarity
+────────────────────────────────────────────────────────────
+  ✓  related pair scores higher than unrelated
+
+────────────────────────────────────────────────────────────
+  6. Auto-batching (batch_size=2)
+────────────────────────────────────────────────────────────
+  ✓  5 texts → 5 vectors
+
+────────────────────────────────────────────────────────────
+  7. ChromaDB adapter (as_chroma_ef)
+────────────────────────────────────────────────────────────
+  ✓  returns list of vectors
+  ✓  vector has 384 dims
+
+────────────────────────────────────────────────────────────
+  8. FAISS adapter (as_faiss_matrix)
+────────────────────────────────────────────────────────────
+  ✓  shape is (2, 384)
+  ✓  dtype is float32
+
+============================================================
+  All checks passed ✓
+============================================================
+```
+
+### Run the smoke test locally (without Docker)
+
+Requires Ollama installed and running on your machine:
+
+```bash
+# Install Ollama: https://ollama.com/download
+ollama pull all-minilm
+ollama serve          # if not already running as a service
+
+python scripts/test_ollama.py
+```
+
+### Use OllamaEmbedder in Python
+
+```python
+from kbcraft.embedders import OllamaEmbedder
+
+# Connect to Ollama (default: http://localhost:11434)
+embedder = OllamaEmbedder(model="all-minilm")
+
+# Encode a search query (no prefix needed for all-minilm)
+query_vec = embedder.encode_query("how to handle errors in Python")
+
+# Encode documents for indexing
+doc_vecs = embedder.encode_documents([
+    "try:\n    risky_call()\nexcept Exception as e:\n    handle(e)",
+    "Use try/except to catch exceptions in Python.",
+])
+
+# Plain batch encode (no prefix, for clustering / deduplication)
+vecs = embedder.encode(["hello world", "foo bar"])
+
+# ChromaDB integration
+import chromadb
+client = chromadb.Client()
+collection = client.get_or_create_collection(
+    "my_docs",
+    embedding_function=embedder.as_chroma_ef(),
+)
+
+# FAISS integration
+import faiss, numpy as np
+index = faiss.IndexFlatL2(embedder.embedding_dim)   # 384
+index.add(embedder.as_faiss_matrix(["doc1", "doc2"]))
+
+q = np.array([embedder.encode_query("search term")], dtype=np.float32)
+distances, indices = index.search(q, k=3)
+```
+
+### Switching the embedding model
+
+To use a different Ollama model, change two lines:
+
+**`docker-compose.yml`** — update the pull command:
+```yaml
+entrypoint: >
+  sh -c "ollama pull nomic-embed-text && echo 'Model ready.'"
+```
+
+**`scripts/test_ollama.py`** — update the model name:
+```python
+embedder = OllamaEmbedder(model="nomic-embed-text", host=OLLAMA_HOST)
+```
+
+Available CPU-friendly models:
+
+| Model | Size | Dims | EN | RU | Code |
+|---|---|---|---|---|---|
+| `all-minilm` | ~22 MB | 384 | ✓ | limited | limited |
+| `nomic-embed-text` | ~274 MB | 768 | ✓✓ | ✓ | ✓✓ |
+| `mxbai-embed-large` | ~670 MB | 1024 | ✓✓ | ✓ | ✓ |
+| `bge-m3` | ~1.2 GB | 1024 | ✓✓ | ✓✓ | ✓✓ |
+
+### Troubleshooting
+
+**`Cannot reach Ollama` error**
+
+```bash
+# Check Ollama is healthy
+docker compose ps ollama
+docker compose logs ollama
+
+# Restart just the Ollama service
+docker compose restart ollama
+```
+
+**Model not found**
+
+```bash
+# Re-run the pull service
+docker compose run ollama-pull
+```
+
+**Rebuild kbcraft image after code changes**
+
+```bash
+docker compose build kbcraft
+docker compose up -d
+```
+
+---
+
 ## Documentation
 
 - **[Development Setup Guide](#development-setup-guide)** - Complete guide for setting up the project

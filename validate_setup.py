@@ -38,7 +38,7 @@ def main():
     checks_total += 1
     def test_import_kbcraft():
         import kbcraft
-        assert kbcraft.__version__ == "0.1.0"
+        assert kbcraft.__version__ == "0.1.1"
 
     if check("Import kbcraft module", test_import_kbcraft):
         checks_passed += 1
@@ -46,7 +46,7 @@ def main():
     # Check 2: Import all submodules
     checks_total += 1
     def test_import_submodules():
-        from kbcraft import cli, scaffold, organize, chunker, embedder, sync, utils
+        from kbcraft import cli, scaffold, selector, chunker, embedder, sync, utils
         from kbcraft.vector_stores import chroma, qdrant, pinecone, faiss
 
     if check("Import all submodules", test_import_submodules):

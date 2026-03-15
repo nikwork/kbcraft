@@ -19,8 +19,8 @@ Output (written to <project_root>/faiss_index/):
 Environment variables:
     OLLAMA_HOST   — Ollama base URL (default: http://localhost:11434)
     MODEL         — embedding model name   (default: all-minilm)
-    MAX_TOKENS    — max tokens per chunk   (default: 256)
-    CHUNK_OVERLAP — overlap tokens         (default: 32)
+    MAX_TOKENS    — max tokens per chunk   (default: 200, counted by HF tokenizer when available)
+    CHUNK_OVERLAP — overlap tokens         (default: 20)
     OUTPUT_DIR    — output directory path  (default: <project_root>/faiss_index)
 """
 
@@ -39,7 +39,7 @@ MODEL = os.environ.get("MODEL", "all-minilm")
 # 100 words ≈ 120-150 subword tokens — well within all-minilm's 256-token
 # context window even after the File/Path header is prepended.
 # Override via MAX_TOKENS env var for larger-context models.
-MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "100"))
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "200"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "10"))
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(PROJECT_ROOT / "faiss_index")))
 
@@ -74,6 +74,45 @@ def log_section(title: str) -> None:
     print("─" * 60, flush=True)
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _embed_one(chunk, text, embedder, tok, good_chunks, vectors, max_retries=5):
+    """Embed a single chunk with retries and automatic truncation.
+
+    Returns True if embedded (or truncated and embedded), False if skipped.
+
+    - Transient connection failures are retried with exponential back-off.
+    - HTTP 400 "input length exceeds" errors shrink the text by 20% each
+      retry, working around tokenizer count vs. Ollama count mismatches.
+    """
+    embed_text = text
+    for attempt in range(max_retries):
+        try:
+            vec = embedder.encode_documents([embed_text])[0]
+            good_chunks.append(chunk)
+            vectors.append(vec)
+            return True
+        except RuntimeError as exc:
+            if "input length exceeds" in str(exc):
+                # Truncate by chars (not tokens) to avoid WordPiece garbling
+                embed_text = embed_text[: int(len(embed_text) * 0.8)]
+            elif attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+            else:
+                log(f"  SKIP chunk {chunk.index} from {Path(chunk.source).name}"
+                    f" ({len(text.split())} words): {exc}")
+                return False
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+            else:
+                log(f"  SKIP chunk {chunk.index} from {Path(chunk.source).name}"
+                    f" ({len(text.split())} words): {exc}")
+                return False
+    return False
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -83,13 +122,17 @@ def main() -> None:
     from kbcraft.chunker import Chunker
     from kbcraft.embedders.ollama import OllamaEmbedder
     from kbcraft.selector import FileFilter
+    from kbcraft.tokenizer import get_tokenizer
 
     log("\n" + "=" * 60)
     log("  kbcraft — build FAISS index from source base")
     log("=" * 60)
+    tok = get_tokenizer(MODEL, ollama_host=OLLAMA_HOST)
+
     log(f"  Project root : {PROJECT_ROOT}")
     log(f"  Ollama host  : {OLLAMA_HOST}")
     log(f"  Model        : {MODEL}")
+    log(f"  Tokenizer    : {tok.backend} ({tok.model_name})")
     log(f"  Max tokens   : {MAX_TOKENS}")
     log(f"  Overlap      : {CHUNK_OVERLAP}")
     log(f"  Output dir   : {OUTPUT_DIR}")
@@ -119,6 +162,7 @@ def main() -> None:
         max_chunk_tokens=MAX_TOKENS,
         chunk_overlap=CHUNK_OVERLAP,
         prepend_source=True,
+        tokenize=tok.tokenize,
     )
     t0 = time.time()
     chunks = chunker.chunk_files(files, base_dir=PROJECT_ROOT)
@@ -149,14 +193,9 @@ def main() -> None:
             vectors.extend(batch_vecs)
         except Exception:
             # Retry one-by-one to salvage the good chunks in this batch
+            time.sleep(2)
             for chunk, text in zip(batch_chunks, batch_texts):
-                try:
-                    vec = embedder.encode_documents([text])[0]
-                    good_chunks.append(chunk)
-                    vectors.append(vec)
-                except Exception as inner_exc:
-                    log(f"  SKIP chunk {chunk.index} from {Path(chunk.source).name}"
-                        f" ({len(text.split())} words): {inner_exc}")
+                if not _embed_one(chunk, text, embedder, tok, good_chunks, vectors):
                     skipped += 1
         if (i // batch_size) % 4 == 0:
             log(f"  Embedded {min(i + batch_size, len(texts))}/{len(texts)} chunks …")
@@ -206,6 +245,7 @@ def main() -> None:
         "embedding_dim": dim,
         "total_chunks": len(chunks),
         "total_files": len(files),
+        "tokenizer_backend": tok.backend,
         "max_chunk_tokens": MAX_TOKENS,
         "chunk_overlap": CHUNK_OVERLAP,
         "files": [str(f.relative_to(PROJECT_ROOT)) for f in files],

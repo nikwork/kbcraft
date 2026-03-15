@@ -35,6 +35,7 @@ services:
         condition: service_healthy
     environment:
       - OLLAMA_HOST=http://ollama:11434
+      - MAX_TOKENS=240        # all-minilm context window is 256; ~10 tokens reserved for File/Path header
     volumes:
       - ./docs:/app/docs                  # mount local docs folder to index
       - ./scripts:/app/scripts            # mount scripts for easy execution

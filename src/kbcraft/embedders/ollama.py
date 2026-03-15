@@ -207,9 +207,15 @@ class OllamaEmbedder(BaseEmbedder):
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 data = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Ollama HTTP {exc.code} for model {self._model!r}: {body}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise ConnectionError(
-                f"Cannot reach Ollama at {self._host}. " "Make sure Ollama is running: ollama serve"
+                f"Cannot reach Ollama at {self._host}. "
+                "Make sure Ollama is running: ollama serve"
             ) from exc
 
         return data["embeddings"]

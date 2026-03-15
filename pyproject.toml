@@ -12,9 +12,6 @@ keywords = ["rag", "markdown", "knowledge-base", "vector-store", "embeddings"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -22,7 +19,9 @@ classifiers = [
 packages = [{include = "kbcraft", from = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = ">=3.10,<3.15"
+faiss-cpu = "^1.13.2"
+chromadb = "^1.5.5"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"

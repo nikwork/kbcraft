@@ -1,0 +1,7 @@
+# Local dev overrides — not for CI or production.
+# Automatically merged by `docker compose up`.
+# Use: docker compose run kbcraft bash
+services:
+  kbcraft:
+    stdin_open: true
+    tty: true

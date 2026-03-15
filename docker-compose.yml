@@ -1,6 +1,7 @@
 services:
 
   # ── Ollama server ──────────────────────────────────────────────────────────
+  # TODO: pin to a specific version, e.g. ollama/ollama:0.5.0
   ollama:
     image: ollama/ollama:latest
     container_name: kbcraft-ollama
@@ -8,28 +9,20 @@ services:
       - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama      # persist pulled models across restarts
+    # Start server, wait until ready, then pull all-minilm (no-op if already present).
+    # all-minilm: 384 dims, ~22 MB — lightest CPU-friendly embedding model.
+    entrypoint: >
+      sh -c "ollama serve &
+             SERVER_PID=$$!;
+             until ollama list 2>/dev/null; do sleep 1; done;
+             ollama pull all-minilm;
+             wait $$SERVER_PID"
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 15s
-
-  # ── Pull all-minilm once, then exit ──────────────────────────────────────
-  # all-minilm: 384 dims, ~22 MB — lightest CPU-friendly embedding model.
-  # Re-runs on `docker compose up` but `ollama pull` is a no-op when the
-  # model is already present in the shared volume.
-  ollama-pull:
-    image: ollama/ollama:latest
-    container_name: kbcraft-ollama-pull
-    depends_on:
-      ollama:
-        condition: service_healthy
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-    entrypoint: >
-      sh -c "ollama pull all-minilm && echo 'Model ready.'"
-    restart: "no"
+      start_period: 30s
 
   # ── kbcraft application ────────────────────────────────────────────────────
   kbcraft:
@@ -41,14 +34,13 @@ services:
       ollama:
         condition: service_healthy
     environment:
-      - OLLAMA_HOST=http://ollama:11434   # used by test scripts
+      - OLLAMA_HOST=http://ollama:11434
     volumes:
       - ./docs:/app/docs                  # mount local docs folder to index
       - ./scripts:/app/scripts            # mount scripts for easy execution
-    stdin_open: true
-    tty: true
-    # Override CMD to keep container alive for interactive use:
-    #   docker compose run kbcraft bash
+      - ./src:/app/src                    # source code — available for indexing
+      - ./tests:/app/tests                # test suite — available for indexing
+      - ./kb:/app/kb                      # knowledge base docs — available for indexing
     command: ["kbcraft", "--help"]
 
 volumes:

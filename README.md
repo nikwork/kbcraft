@@ -8,7 +8,7 @@
 
 > **Build structured, RAG-ready knowledge bases from Markdown — straight from your terminal.**
 
-`kbcraft` is a Python command-line utility for authoring, organizing, and indexing collections of Markdown files into vector stores for use in Retrieval-Augmented Generation (RAG) pipelines. It bridges the gap between human-readable documentation and machine-queryable knowledge.
+`kbcraft` is a Python command-line utility for authoring, organizing, and indexing collections of source files, Markdown files and other meaningful files into vector stores for use in Retrieval-Augmented Generation (RAG) pipelines. It bridges the gap between human-readable documentation, code base and machine-queryable knowledge.
 
 ---
 
@@ -22,6 +22,101 @@
 - 🖥️ **Pure CLI** — scriptable, CI-friendly, no GUI required
 
 ---
+
+## Main Usage Scenario
+
+The kbcraft pipeline turns a collection of files into a queryable vector store in five steps.
+
+### 1. Configure
+
+```python
+from kbcraft.selector import FileFilter
+from kbcraft.embedders import OllamaEmbedder
+
+# Choose your embedding model (384-dim, ~22 MB, CPU-friendly)
+embedder = OllamaEmbedder(model="all-minilm")
+
+# Configure file selector — pick languages and exclusion rules
+file_filter = FileFilter.from_presets(
+    ["python", "markdown"],
+    exclude_patterns=["tests/**", "__pycache__/"],
+)
+```
+
+### 2. Select files
+
+```python
+files = file_filter.collect_files("./myproject")
+# Returns a list of Path objects matching the presets and exclusion rules
+```
+
+### 3. Chunk documents
+
+```python
+from kbcraft.chunker import Chunker
+
+chunker = Chunker(chunk_size=512, chunk_overlap=64)
+chunks = chunker.chunk_files(files)
+# Each chunk: {"text": "...", "source": "path/to/file.py", "index": 0}
+```
+
+### 4. Embed chunks
+
+```python
+texts = [c["text"] for c in chunks]
+vectors = embedder.encode_documents(texts)
+# Returns a list of float32 vectors, one per chunk
+```
+
+### 5. Push to vector store
+
+```python
+from kbcraft.vector_stores.chroma import ChromaStore
+
+store = ChromaStore(collection="myproject")
+store.upsert(chunks, vectors)
+```
+
+### 6. Query
+
+```python
+query_vec = embedder.encode_query("how does error handling work?")
+results = store.search(query_vec, k=5)
+# Returns the top-5 most relevant chunks — feed them to your LLM as context
+```
+
+### 7. Incremental re-index
+
+```python
+from kbcraft.sync import sync
+
+# Only re-embeds files that changed since the last run
+sync("./myproject", file_filter, chunker, embedder, store)
+```
+
+> **CLI equivalent** (once implemented):
+> ```bash
+> kbcraft collect ./myproject --lang python --lang markdown
+> kbcraft index --store chroma --model all-minilm
+> kbcraft query "how does error handling work?"
+> ```
+
+---
+
+### Development status
+
+| Step | Module | Status |
+|------|--------|--------|
+| Configure | `selector.py`, `embedder.py` | ✅ implemented |
+| Select files | `selector.py` | ✅ implemented |
+| Chunk | `chunker.py` | 🚧 stub |
+| Embed | `embedders/ollama.py` | ✅ implemented |
+| Push to store | `vector_stores/` | 🚧 stubs |
+| Query | `vector_stores/` | 🚧 stubs |
+| Incremental sync | `sync.py` | 🚧 stub |
+| CLI commands | `cli.py` | 🚧 partial |
+
+Next modules to implement: `chunker.py` → `vector_stores/chroma.py` → `sync.py` → remaining CLI commands.
 
 ## File Selector
 
@@ -163,8 +258,7 @@ The Docker Compose setup starts a local [Ollama](https://ollama.com) inference s
 
 | Service | Image | Role |
 |---|---|---|
-| `ollama` | `ollama/ollama:latest` | Embedding inference server on port `11434` |
-| `ollama-pull` | `ollama/ollama:latest` | One-shot init: pulls `all-minilm`, then exits |
+| `ollama` | `ollama/ollama:latest` | Embedding inference server on port `11434`; pulls `all-minilm` on first start |
 | `kbcraft` | local build | kbcraft app, starts after Ollama healthcheck passes |
 
 **Default model: `all-minilm`** — 384 dimensions, ~22 MB, fast on CPU. See [Switching the embedding model](#switching-the-embedding-model) to use a heavier model.
@@ -182,16 +276,9 @@ The Docker Compose setup starts a local [Ollama](https://ollama.com) inference s
 docker compose up -d
 ```
 
-On first run this builds the kbcraft image and pulls `all-minilm` (~22 MB). Subsequent starts reuse the cached image and model volume.
+On first run this builds the kbcraft image and pulls `all-minilm` (~22 MB) inside the `ollama` container. Subsequent starts reuse the cached image and model volume.
 
-**2. Watch the model pull finish:**
-
-```bash
-docker compose logs -f ollama-pull
-# → Model ready.
-```
-
-**3. Verify all services are running:**
+**2. Verify all services are running:**
 
 ```bash
 docker compose ps
@@ -202,14 +289,13 @@ Expected output:
 ```
 NAME                    STATUS
 kbcraft-ollama          running (healthy)
-kbcraft-ollama-pull     exited (0)
 kbcraft-app             running
 ```
 
-**4. Check the kbcraft CLI:**
+**3. Check the kbcraft CLI:**
 
 ```bash
-docker compose run kbcraft kbcraft --help
+docker compose run kbcraft --help
 ```
 
 **5. Stop everything:**
@@ -345,10 +431,14 @@ distances, indices = index.search(q, k=3)
 
 To use a different Ollama model, change two lines:
 
-**`docker-compose.yml`** — update the pull command:
+**`docker-compose.yml`** — update the model name in the `ollama` entrypoint:
 ```yaml
 entrypoint: >
-  sh -c "ollama pull nomic-embed-text && echo 'Model ready.'"
+  sh -c "ollama serve &
+         SERVER_PID=$$!;
+         until ollama list 2>/dev/null; do sleep 1; done;
+         ollama pull nomic-embed-text;
+         wait $$SERVER_PID"
 ```
 
 **`scripts/test_ollama.py`** — update the model name:
@@ -381,8 +471,8 @@ docker compose restart ollama
 **Model not found**
 
 ```bash
-# Re-run the pull service
-docker compose run ollama-pull
+# Pull the model manually against the running Ollama server
+docker compose exec ollama ollama pull all-minilm
 ```
 
 **Rebuild kbcraft image after code changes**

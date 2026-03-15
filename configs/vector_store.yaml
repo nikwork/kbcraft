@@ -1,0 +1,34 @@
+# kbcraft — vector store configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# Configures the vector store backend used to persist and query embeddings.
+# Decoupled from embedding.yaml — the same embeddings can be pushed to any backend.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# Active backend — must match a key under `backends` below.
+active_backend: faiss
+
+
+backends:
+
+  faiss:
+    # flat_l2   — exact L2 (Euclidean) search; accurate, no training needed.
+    #             Best for corpora up to ~100k vectors.
+    # flat_ip   — exact inner-product (cosine) search; use with normalised vecs.
+    # ivf_flat  — approximate search for large corpora; requires training.
+    #             Set ivf.nlist to ~sqrt(total_vectors); nprobe controls recall.
+    index_type: flat_l2
+    ivf:
+      nlist: 100    # ~sqrt(total_vectors)
+      nprobe: 10    # higher = better recall, slower
+    output_dir: faiss_index       # env: OUTPUT_DIR
+
+  chroma:
+    distance_function: cosine     # cosine | l2 | ip
+
+  qdrant:
+    distance: Cosine              # Cosine | Euclid | Dot
+
+  pinecone:
+    environment: us-east-1-aws
+    metric: cosine                # cosine | euclidean | dotproduct

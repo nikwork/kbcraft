@@ -37,6 +37,7 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - MAX_TOKENS=240        # all-minilm context window is 256; ~10 tokens reserved for File/Path header
     volumes:
+      - ./configs:/app/configs            # embedding + vector store config
       - ./docs:/app/docs                  # mount local docs folder to index
       - ./scripts:/app/scripts            # mount scripts for easy execution
       - ./src:/app/src                    # source code — available for indexing

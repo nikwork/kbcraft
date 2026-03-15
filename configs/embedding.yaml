@@ -1,0 +1,141 @@
+# kbcraft — embedding pipeline configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# Controls the full pipeline: file selection → chunking → embedding → FAISS index.
+# env var overrides are noted inline; they always take precedence over this file.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# Active model — must match a key under `models` below.   env: MODEL
+active_model: all-minilm
+
+
+# ── Backend connection settings ────────────────────────────────────────────────
+# Infrastructure config, independent of which model is active.
+
+backends:
+  ollama:
+    host: http://localhost:11434  # env: OLLAMA_HOST
+    timeout: 60                   # HTTP request timeout in seconds
+
+
+# ── Per-model configurations ───────────────────────────────────────────────────
+# Model-intrinsic properties only: dimensions, context limit, prefixes, chunking.
+# Switch models by changing active_model above.
+
+models:
+
+  nomic-embed-text:
+    backend: ollama
+    batch_size: 32
+    embedding_dim: 768
+    max_tokens: 8192
+    hf_repo: nomic-ai/nomic-embed-text-v1
+    query_prefix: "search_query: "
+    document_prefix: "search_document: "
+    chunking:
+      max_tokens: 400             # env: MAX_TOKENS
+      overlap: 40                 # env: CHUNK_OVERLAP
+      prepend_source: true
+
+  mxbai-embed-large:
+    backend: ollama
+    batch_size: 32
+    embedding_dim: 1024
+    max_tokens: 512
+    hf_repo: mixedbread-ai/mxbai-embed-large-v1
+    query_prefix: "Represent this sentence for searching relevant passages: "
+    document_prefix: ""
+    chunking:
+      max_tokens: 400
+      overlap: 40
+      prepend_source: true
+
+  bge-m3:
+    backend: ollama
+    batch_size: 16                # heavier model — smaller batches
+    embedding_dim: 1024
+    max_tokens: 8192
+    hf_repo: BAAI/bge-m3
+    query_prefix: ""
+    document_prefix: ""
+    hybrid: false                 # set true once BGEM3Embedder backend is added
+    chunking:
+      max_tokens: 500
+      overlap: 50
+      prepend_source: true
+
+  snowflake-arctic-embed:
+    backend: ollama
+    batch_size: 32
+    embedding_dim: 1024
+    max_tokens: 512
+    hf_repo: Snowflake/snowflake-arctic-embed-m
+    query_prefix: "Represent this sentence for searching relevant passages: "
+    document_prefix: ""
+    chunking:
+      max_tokens: 400
+      overlap: 40
+      prepend_source: true
+
+  all-minilm:
+    backend: ollama
+    batch_size: 64                # small model — can handle larger batches
+    embedding_dim: 384
+    max_tokens: 256
+    hf_repo: sentence-transformers/all-MiniLM-L6-v2
+    query_prefix: ""
+    document_prefix: ""
+    chunking:
+      max_tokens: 200             # tight context window — keep chunks small
+      overlap: 20
+      prepend_source: true
+
+  qwen3-embedding:0.6b:
+    backend: ollama
+    batch_size: 64
+    embedding_dim: 1024
+    max_tokens: 32768
+    hf_repo: Qwen/Qwen3-Embedding-0.6B
+    query_prefix: ""
+    document_prefix: ""
+    chunking:
+      max_tokens: 512
+      overlap: 50
+      prepend_source: true
+
+  qwen3-embedding:4b:
+    backend: ollama
+    batch_size: 16
+    embedding_dim: 2560
+    max_tokens: 32768
+    hf_repo: Qwen/Qwen3-Embedding-4B
+    query_prefix: ""
+    document_prefix: ""
+    chunking:
+      max_tokens: 512
+      overlap: 50
+      prepend_source: true
+
+  qwen3-embedding:8b:
+    backend: ollama
+    batch_size: 8
+    embedding_dim: 4096
+    max_tokens: 32768
+    hf_repo: Qwen/Qwen3-Embedding-8B
+    query_prefix: ""
+    document_prefix: ""
+    chunking:
+      max_tokens: 512
+      overlap: 50
+      prepend_source: true
+
+
+# ── Tokenizer ─────────────────────────────────────────────────────────────────
+# Resolution order: ollama (if prefer_ollama) → hf (tokenizers pkg) → whitespace
+
+tokenizer:
+  prefer_ollama: false            # use Ollama /api/tokenize for exact counts
+  hf_fallback_repo: bert-base-uncased
+
+
+

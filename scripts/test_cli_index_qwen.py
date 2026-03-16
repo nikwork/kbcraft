@@ -90,6 +90,8 @@ def main() -> int:
             str(output_dir),
             "--name",
             "test_index_qwen",
+            "--exclude",
+            ".venv/**",
             "--chunk-size",
             str(MAX_TOKENS),
             "--chunk-overlap",

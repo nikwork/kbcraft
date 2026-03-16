@@ -77,6 +77,12 @@ class OllamaBackendConfig:
 
 
 @dataclass
+class OpenAICompatibleBackendConfig:
+    base_url: str
+    token: str
+
+
+@dataclass
 class TokenizerConfig:
     prefer_ollama: bool = False
     hf_fallback_repo: str = "bert-base-uncased"
@@ -86,6 +92,7 @@ class TokenizerConfig:
 class EmbeddingConfig:
     active_model: str
     ollama: OllamaBackendConfig
+    openai_compatible: OpenAICompatibleBackendConfig
     models: Dict[str, ModelConfig]
     tokenizer: TokenizerConfig
 
@@ -177,6 +184,12 @@ class ConfigFactory:
             timeout=float(ollama_raw.get("timeout", 60)),
         )
 
+        oac_raw = raw.get("backends", {}).get("openai_compatible", {})
+        openai_compatible = OpenAICompatibleBackendConfig(
+            base_url=_env("OPENAI_COMPATIBLE_BASE_URL", oac_raw.get("base_url", "http://localhost:11434/v1")),
+            token=_env("OPENAI_COMPATIBLE_TOKEN", oac_raw.get("token", "")),
+        )
+
         tok_raw = raw.get("tokenizer", {})
         tokenizer = TokenizerConfig(
             prefer_ollama=tok_raw.get("prefer_ollama", False),
@@ -205,6 +218,7 @@ class ConfigFactory:
         return EmbeddingConfig(
             active_model=active_model,
             ollama=ollama,
+            openai_compatible=openai_compatible,
             models=models,
             tokenizer=tokenizer,
         )

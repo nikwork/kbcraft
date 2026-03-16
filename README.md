@@ -308,6 +308,171 @@ docker compose down
 
 ---
 
+## Building a vector index with `kbcraft index`
+
+The `index` command runs the full pipeline — file selection, chunking, embedding, and FAISS index creation — in a single command and writes the result to a local directory.
+
+### Quick start (Docker)
+
+```bash
+# Start services (pulls all-minilm on first run)
+docker compose up -d
+
+# Index a folder and save to ./my_index
+docker compose run --rm kbcraft \
+  kbcraft index /app/kb \
+  --output /app/my_index \
+  --name kb
+```
+
+This writes three files to `./my_index/`:
+
+| File | Contents |
+|---|---|
+| `kb.faiss` | FAISS flat-L2 index, ready for similarity search |
+| `kb_chunks.json` | Chunk texts + metadata (source, index, token\_count) |
+| `kb_meta.json` | Build metadata (model, dim, total chunks, file list) |
+
+### Full option reference
+
+```
+kbcraft index SOURCE_DIR [options]
+
+File selection:
+  --lang LANGUAGE       Language preset (repeatable). Available: kbcraft presets
+  --include PATTERN     Extra glob pattern to include (repeatable)
+  --exclude PATTERN     Glob pattern to exclude (repeatable)
+  --kbignore FILE       .kbignore file (gitignore-style). Auto-detected if present
+
+Output:
+  --output DIR          Directory to write files to. Default: ./kbcraft_index
+  --name NAME           Base filename without extension.
+                        Produces <NAME>.faiss, <NAME>_chunks.json, <NAME>_meta.json.
+                        Default: index
+
+Embedder:
+  --embedder ollama|openai   Backend. Default: ollama
+  --model MODEL              Model name. Default: nomic-embed-text
+  --host URL                 Ollama server URL. Default: http://localhost:11434
+  --base-url URL             OpenAI-compatible endpoint. Default: http://localhost:11434/v1
+
+  API token (openai backend only):
+    KBCRAFT_API_TOKEN env var   checked first
+    OPENAI_API_KEY env var      fallback
+
+Chunking:
+  --chunk-size N        Max tokens per chunk. Default: 512
+  --chunk-overlap N     Token overlap between chunks. Default: 50
+```
+
+### Examples
+
+```bash
+# Markdown docs, default Ollama model (all-minilm)
+kbcraft index ./docs --output ./my_index
+
+# Python + YAML source, heavier model, custom chunk size
+kbcraft index ./src \
+  --lang python --lang yaml \
+  --embedder ollama --model nomic-embed-text \
+  --chunk-size 400 --output ./src_index
+
+# Qwen3-0.6B via Ollama's OpenAI-compatible endpoint
+kbcraft index ./docs \
+  --embedder openai \
+  --model qwen3-embedding:0.6b \
+  --output ./qwen_index
+
+# Remote endpoint with auth token from env
+KBCRAFT_API_TOKEN=sk-... \
+kbcraft index ./docs \
+  --embedder openai \
+  --base-url https://my-server/v1 \
+  --model text-embedding-3-small
+
+# Exclude drafts and tests, custom index name
+kbcraft index ./myproject \
+  --lang python --lang markdown \
+  --exclude 'drafts/**' --exclude 'tests/**' \
+  --output ./myproject_index \
+  --name v1
+```
+
+### Run the CLI smoke test
+
+After `docker compose up -d`, run the end-to-end test against the live Ollama server:
+
+```bash
+docker compose run --rm kbcraft python scripts/test_cli_index.py
+```
+
+Expected output:
+
+```
+============================================================
+  kbcraft — CLI index smoke test
+============================================================
+  Source dir   : /app/kb
+  Ollama host  : http://ollama:11434
+  Model        : all-minilm
+
+────────────────────────────────────────────────────────────
+  1. Running kbcraft index
+────────────────────────────────────────────────────────────
+  $ kbcraft index /app/kb --embedder ollama --model all-minilm ...
+
+  [pipeline output]
+
+  ✓  exit code is 0
+
+────────────────────────────────────────────────────────────
+  2. Output files
+────────────────────────────────────────────────────────────
+  ✓  test_index.faiss exists
+  ✓  test_index_chunks.json exists
+  ✓  test_index_meta.json exists
+
+────────────────────────────────────────────────────────────
+  3. chunks.json
+────────────────────────────────────────────────────────────
+  ✓  contains N chunks (> 0)
+  ✓  chunk has field 'text'
+  ✓  chunk has field 'source'
+  ✓  chunk has field 'index'
+  ✓  chunk has field 'token_count'
+
+────────────────────────────────────────────────────────────
+  4. meta.json
+────────────────────────────────────────────────────────────
+  ✓  model == 'all-minilm'
+  ✓  embedding_dim > 0
+  ✓  total_chunks == N
+
+────────────────────────────────────────────────────────────
+  5. FAISS index
+────────────────────────────────────────────────────────────
+  ✓  ntotal == N
+  ✓  d == 384
+
+────────────────────────────────────────────────────────────
+  6. Smoke-test query
+────────────────────────────────────────────────────────────
+  ✓  search returns k=3 results
+  ✓  all result ids are valid
+
+============================================================
+  All checks passed ✓
+============================================================
+```
+
+Override the model via environment variable:
+
+```bash
+TEST_MODEL=nomic-embed-text docker compose run --rm kbcraft python scripts/test_cli_index.py
+```
+
+---
+
 ## Testing OllamaEmbedder
 
 ### Run the smoke test (via Docker Compose)

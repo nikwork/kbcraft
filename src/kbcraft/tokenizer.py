@@ -42,6 +42,9 @@ _HF_VOCAB: Dict[str, str] = {
     "mxbai-embed-large": "mixedbread-ai/mxbai-embed-large-v1",
     "bge-m3": "BAAI/bge-m3",
     "snowflake-arctic-embed": "Snowflake/snowflake-arctic-embed-m",
+    "qwen3-embedding:0.6b": "Qwen/Qwen3-Embedding-0.6B",
+    "qwen3-embedding:4b": "Qwen/Qwen3-Embedding-4B",
+    "qwen3-embedding:8b": "Qwen/Qwen3-Embedding-8B",
 }
 
 # Fallback HF vocab used when the model isn't in _HF_VOCAB

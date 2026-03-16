@@ -17,6 +17,10 @@ backends:
     host: http://localhost:11434  # env: OLLAMA_HOST
     timeout: 60                   # HTTP request timeout in seconds
 
+  openai_compatible:
+    base_url: http://localhost:11434/v1  # env: OPENAI_COMPATIBLE_BASE_URL
+    token: ""                            # env: OPENAI_COMPATIBLE_TOKEN  (leave blank for local servers)
+
 
 # ── Per-model configurations ───────────────────────────────────────────────────
 # Model-intrinsic properties only: dimensions, context limit, prefixes, chunking.
@@ -91,7 +95,7 @@ models:
       prepend_source: true
 
   qwen3-embedding:0.6b:
-    backend: ollama
+    backend: openai_compatible
     batch_size: 64
     embedding_dim: 1024
     max_tokens: 32768
@@ -104,7 +108,7 @@ models:
       prepend_source: true
 
   qwen3-embedding:4b:
-    backend: ollama
+    backend: openai_compatible
     batch_size: 16
     embedding_dim: 2560
     max_tokens: 32768
@@ -117,7 +121,7 @@ models:
       prepend_source: true
 
   qwen3-embedding:8b:
-    backend: ollama
+    backend: openai_compatible
     batch_size: 8
     embedding_dim: 4096
     max_tokens: 32768

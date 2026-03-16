@@ -203,6 +203,134 @@ class BaseEmbedder(ABC):
         return np.array(self.encode(texts), dtype=np.float32)
 
 
+class OpenAICompatibleEmbedder(BaseEmbedder):
+    """Embedder backed by any OpenAI-compatible ``/v1/embeddings`` endpoint.
+
+    Works with OpenAI, Azure OpenAI, Ollama, LocalAI, vLLM, LM Studio,
+    and any other server that speaks the OpenAI embeddings API.
+
+    Args:
+        base_url: Base URL of the API server, e.g. ``"https://api.openai.com/v1"``
+                  or ``"http://localhost:11434/v1"`` for Ollama.
+        model:    Model name passed in the request body, e.g.
+                  ``"text-embedding-3-small"`` or ``"nomic-embed-text"``.
+        token:    Bearer token for the ``Authorization`` header.
+                  Pass ``None`` or ``""`` to skip auth (local servers).
+
+    Example::
+
+        embedder = OpenAICompatibleEmbedder(
+            base_url="https://api.openai.com/v1",
+            model="text-embedding-3-small",
+            token="sk-...",
+        )
+        vectors = embedder.encode(["Hello world"])
+        vectors = await embedder.encode_async(["Hello world"])
+    """
+
+    def __init__(self, base_url: str, model: str, token: str) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._token = token or ""
+        self._dim: int = None  # type: ignore[assignment]
+
+    # ------------------------------------------------------------------
+    # BaseEmbedder interface
+    # ------------------------------------------------------------------
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def embedding_dim(self) -> int:
+        if self._dim is None:
+            self._dim = len(self.encode(["probe"])[0])
+        return self._dim
+
+    def encode(self, texts: List[str]) -> List[List[float]]:
+        """Synchronously embed *texts*, sending all inputs in one request."""
+        import json
+        import urllib.request
+        import urllib.error
+
+        payload = json.dumps({"model": self._model, "input": texts}).encode()
+        headers = {"Content-Type": "application/json"}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+
+        req = urllib.request.Request(
+            f"{self._base_url}/embeddings",
+            data=payload,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                body = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(
+                f"Embedding API returned HTTP {exc.code}: {exc.read().decode(errors='replace')}"
+            ) from exc
+
+        items = sorted(body["data"], key=lambda d: d["index"])
+        return [item["embedding"] for item in items]
+
+    async def encode_async(self, texts: List[str]) -> List[List[float]]:
+        """Asynchronously embed *texts*, sending all inputs in one request."""
+        import asyncio
+        import json
+        import ssl
+        from urllib.parse import urlparse
+
+        url = f"{self._base_url}/embeddings"
+        payload = json.dumps({"model": self._model, "input": texts}).encode()
+        headers = {"Content-Type": "application/json"}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+
+        parsed = urlparse(url)
+        use_ssl = parsed.scheme == "https"
+        host = parsed.hostname
+        port = parsed.port or (443 if use_ssl else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        header_lines = "\r\n".join(f"{k}: {v}" for k, v in headers.items())
+        request = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"{header_lines}\r\n"
+            f"Content-Length: {len(payload)}\r\n"
+            f"Connection: close\r\n\r\n"
+        ).encode() + payload
+
+        ssl_ctx = ssl.create_default_context() if use_ssl else None
+        reader, writer = await asyncio.open_connection(host, port, ssl=ssl_ctx)
+        try:
+            writer.write(request)
+            await writer.drain()
+            response = await reader.read(2**20)
+        finally:
+            writer.close()
+
+        # Split headers from body.
+        header_end = response.find(b"\r\n\r\n")
+        status_line = response[: response.find(b"\r\n")].decode()
+        status_code = int(status_line.split(" ", 2)[1])
+        body_bytes = response[header_end + 4 :]
+
+        if status_code != 200:
+            raise RuntimeError(
+                f"Embedding API returned HTTP {status_code}: {body_bytes.decode(errors='replace')}"
+            )
+
+        body = json.loads(body_bytes)
+        items = sorted(body["data"], key=lambda d: d["index"])
+        return [item["embedding"] for item in items]
+
+
 class ChromaEmbeddingFunction:
     """Wraps a :class:`BaseEmbedder` as a ChromaDB ``EmbeddingFunction``.
 

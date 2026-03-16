@@ -34,7 +34,7 @@ _QWEN3_HOST = os.environ.get("QWEN3_HOST", os.environ.get("OLLAMA_HOST", "http:/
 BASE_URL = _QWEN3_HOST.rstrip("/") + "/v1"
 MODEL = os.environ.get("QWEN3_MODEL", "qwen3-embedding:0.6b")
 MAX_TOKENS = int(os.environ.get("QWEN3_MAX_TOKENS", "32768"))
-SOURCE_DIR = PROJECT_ROOT / "kb"
+SOURCE_DIR = PROJECT_ROOT
 
 PASS = "  \033[32m✓\033[0m"
 FAIL = "  \033[31m✗\033[0m"
@@ -84,14 +84,16 @@ def main() -> int:
             BASE_URL,
             "--lang",
             "markdown",
+            "--lang",
+            "python",
             "--output",
             str(output_dir),
             "--name",
             "test_index_qwen",
             "--chunk-size",
-            "512",
+            str(MAX_TOKENS),
             "--chunk-overlap",
-            "64",
+            str(MAX_TOKENS // 8),
         ]
         log(f"  $ {' '.join(cmd)}\n")
 

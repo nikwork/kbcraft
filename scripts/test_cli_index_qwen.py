@@ -153,9 +153,9 @@ def main() -> int:
             # ── 6. Smoke-test query ────────────────────────────────────────────
             log_section("6. Smoke-test query")
 
-            from kbcraft.embedder import OpenAICompatibleEmbedder
+            from kbcraft.embedders.qwen import Qwen3Embedder
 
-            embedder = OpenAICompatibleEmbedder(base_url=BASE_URL, model=MODEL, token="")
+            embedder = Qwen3Embedder(variant="0.6b", base_url=BASE_URL, token="")
             query = "how does the chunker split markdown files"
             log(f"  Query: '{query}'")
 

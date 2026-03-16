@@ -23,6 +23,7 @@ python = ">=3.10,<3.15"
 faiss-cpu = "^1.13.2"
 chromadb = "^1.5.5"
 langchain-text-splitters = ">=0.2,<1.0"
+transformers = ">=4.40,<5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"

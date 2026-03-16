@@ -77,7 +77,7 @@ def main() -> int:
             "index",
             str(SOURCE_DIR),
             "--embedder",
-            "openai_compatible",
+            "openai",
             "--model",
             MODEL,
             "--base-url",

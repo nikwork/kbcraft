@@ -17,10 +17,10 @@ services:
              ollama pull all-minilm;
              wait $$SERVER_PID"
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "sh", "-c", "ollama list | grep -q all-minilm"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 20
       start_period: 30s
 
   # ── Ollama server (qwen3-embedding:0.6b) ───────────────────────────────────
@@ -39,10 +39,10 @@ services:
              ollama pull qwen3-embedding:0.6b;
              wait $$SERVER_PID"
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "sh", "-c", "ollama list | grep -q qwen3-embedding"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 20
       start_period: 60s
 
   # ── kbcraft application ────────────────────────────────────────────────────

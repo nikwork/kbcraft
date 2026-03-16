@@ -9,13 +9,15 @@ services:
       - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama      # persist pulled models across restarts
-    # Start server, wait until ready, then pull all-minilm (no-op if already present).
-    # all-minilm: 384 dims, ~22 MB — lightest CPU-friendly embedding model.
+    # Start server, wait until ready, then pull models (no-op if already present).
+    # all-minilm:            384 dims, ~22 MB  — lightweight CPU-friendly model.
+    # qwen3-embedding:0.6b: 1024 dims, ~500 MB — Qwen3 0.6b embedding model.
     entrypoint: >
       sh -c "ollama serve &
              SERVER_PID=$$!;
              until ollama list 2>/dev/null; do sleep 1; done;
              ollama pull all-minilm;
+             ollama pull qwen3-embedding:0.6b;
              wait $$SERVER_PID"
     healthcheck:
       test: ["CMD", "ollama", "list"]
@@ -36,6 +38,9 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - MAX_TOKENS=240        # all-minilm context window is 256; ~10 tokens reserved for File/Path header
+      - QWEN3_HOST=http://ollama:11434
+      - QWEN3_MODEL=qwen3-embedding:0.6b
+      - QWEN3_MAX_TOKENS=32768   # Qwen3-Embedding-0.6B context window
     volumes:
       - ./configs:/app/configs            # embedding + vector store config
       - ./docs:/app/docs                  # mount local docs folder to index

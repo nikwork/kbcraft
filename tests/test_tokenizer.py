@@ -122,9 +122,7 @@ class TestOllamaTokenizer:
     def _make_tok(self, response_tokens):
         tok = OllamaTokenizer(model="all-minilm", host="http://mock:11434")
         mock_resp = MagicMock()
-        mock_resp.read.return_value = (
-            '{"tokens": ' + str(response_tokens) + "}"
-        ).encode()
+        mock_resp.read.return_value = ('{"tokens": ' + str(response_tokens) + "}").encode()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         return tok, mock_resp

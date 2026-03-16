@@ -22,20 +22,20 @@ Usage::
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
+
 
 def _load_yaml(path: Path) -> dict:
     try:
         import yaml
     except ImportError as exc:
         raise ImportError(
-            "PyYAML is required to load config files. "
-            "Install it with: pip install pyyaml"
+            "PyYAML is required to load config files. " "Install it with: pip install pyyaml"
         ) from exc
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
@@ -48,6 +48,7 @@ def _env(key: str, default=None):
 
 
 # ── Embedding data models ──────────────────────────────────────────────────────
+
 
 @dataclass
 class ChunkingConfig:
@@ -104,6 +105,7 @@ class EmbeddingConfig:
 
 # ── Vector store data models ───────────────────────────────────────────────────
 
+
 @dataclass
 class FaissConfig:
     index_type: str = "flat_l2"
@@ -143,6 +145,7 @@ class VectorStoreConfig:
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
+
 
 class ConfigFactory:
     """Load and instantiate kbcraft config objects from the ``configs/`` directory.
@@ -186,7 +189,9 @@ class ConfigFactory:
 
         oac_raw = raw.get("backends", {}).get("openai_compatible", {})
         openai_compatible = OpenAICompatibleBackendConfig(
-            base_url=_env("OPENAI_COMPATIBLE_BASE_URL", oac_raw.get("base_url", "http://localhost:11434/v1")),
+            base_url=_env(
+                "OPENAI_COMPATIBLE_BASE_URL", oac_raw.get("base_url", "http://localhost:11434/v1")
+            ),
             token=_env("OPENAI_COMPATIBLE_TOKEN", oac_raw.get("token", "")),
         )
 
@@ -196,16 +201,12 @@ class ConfigFactory:
             hf_fallback_repo=tok_raw.get("hf_fallback_repo", "bert-base-uncased"),
         )
 
-        models = {
-            name: self._parse_model(name, cfg)
-            for name, cfg in raw.get("models", {}).items()
-        }
+        models = {name: self._parse_model(name, cfg) for name, cfg in raw.get("models", {}).items()}
 
         active_model = _env("MODEL", raw.get("active_model"))
         if active_model not in models:
             raise KeyError(
-                f"Model {active_model!r} not found in embedding.yaml. "
-                f"Available: {list(models)}"
+                f"Model {active_model!r} not found in embedding.yaml. " f"Available: {list(models)}"
             )
 
         # Apply chunking env var overrides to the active model only

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kbcraft"
-version = "0.1.0"
+version = "0.2.0"
 description = "Build structured, RAG-ready knowledge bases from Markdown"
 authors = ["kbcraft <example@example.com>"]
 readme = "README.md"

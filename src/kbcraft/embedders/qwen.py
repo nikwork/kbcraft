@@ -37,29 +37,29 @@ from kbcraft.embedder import OpenAICompatibleEmbedder
 #: Ollama model tag for each variant.
 QWEN3_MODEL_TAG: Dict[str, str] = {
     "0.6b": "qwen3-embedding:0.6b",
-    "4b":   "qwen3-embedding:4b",
-    "8b":   "qwen3-embedding:8b",
+    "4b": "qwen3-embedding:4b",
+    "8b": "qwen3-embedding:8b",
 }
 
 #: Official HuggingFace repo for the tokenizer of each variant.
 QWEN3_HF_REPO: Dict[str, str] = {
     "0.6b": "Qwen/Qwen3-Embedding-0.6B",
-    "4b":   "Qwen/Qwen3-Embedding-4B",
-    "8b":   "Qwen/Qwen3-Embedding-8B",
+    "4b": "Qwen/Qwen3-Embedding-4B",
+    "8b": "Qwen/Qwen3-Embedding-8B",
 }
 
 #: Embedding dimensions per variant.
 QWEN3_DIM: Dict[str, int] = {
     "0.6b": 1024,
-    "4b":   2560,
-    "8b":   4096,
+    "4b": 2560,
+    "8b": 4096,
 }
 
 #: Maximum input tokens per variant (all share the same 32k context).
 QWEN3_MAX_TOKENS: Dict[str, int] = {
     "0.6b": 32768,
-    "4b":   32768,
-    "8b":   32768,
+    "4b": 32768,
+    "8b": 32768,
 }
 
 _VARIANTS = tuple(QWEN3_MODEL_TAG)
@@ -124,9 +124,7 @@ class Qwen3Embedder(OpenAICompatibleEmbedder):
         token: str = "",
     ) -> None:
         if variant not in QWEN3_MODEL_TAG:
-            raise ValueError(
-                f"Unknown Qwen3 variant {variant!r}. Choose one of: {_VARIANTS}"
-            )
+            raise ValueError(f"Unknown Qwen3 variant {variant!r}. Choose one of: {_VARIANTS}")
         super().__init__(
             base_url=base_url,
             model=QWEN3_MODEL_TAG[variant],
@@ -216,10 +214,7 @@ class Qwen3Embedder(OpenAICompatibleEmbedder):
         )
         # When return_overflowing_tokens=True the tokenizer returns a list of
         # encodings even for a single input, so input_ids is List[List[int]].
-        return [
-            tok.decode(ids, skip_special_tokens=True)
-            for ids in enc["input_ids"]
-        ]
+        return [tok.decode(ids, skip_special_tokens=True) for ids in enc["input_ids"]]
 
     # ------------------------------------------------------------------
     # Internal helpers

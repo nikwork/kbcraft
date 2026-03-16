@@ -191,9 +191,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="MODEL",
         default=None,
         help=(
-            "Model name. "
-            "ollama default: nomic-embed-text. "
-            "openai default: nomic-embed-text."
+            "Model name. " "ollama default: nomic-embed-text. " "openai default: nomic-embed-text."
         ),
     )
     index.add_argument(
@@ -206,10 +204,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--base-url",
         metavar="URL",
         default="http://localhost:11434/v1",
-        help=(
-            "Base URL for the OpenAI-compatible endpoint. "
-            "Default: http://localhost:11434/v1"
-        ),
+        help=("Base URL for the OpenAI-compatible endpoint. " "Default: http://localhost:11434/v1"),
     )
     # Chunking
     index.add_argument(
@@ -336,8 +331,8 @@ def _cmd_index(args: argparse.Namespace) -> int:
     _QWEN3_VARIANTS = {"qwen3-embedding:0.6b", "qwen3-embedding:4b", "qwen3-embedding:8b"}
     _QWEN3_VARIANT_MAP = {
         "qwen3-embedding:0.6b": "0.6b",
-        "qwen3-embedding:4b":   "4b",
-        "qwen3-embedding:8b":   "8b",
+        "qwen3-embedding:4b": "4b",
+        "qwen3-embedding:8b": "8b",
     }
 
     model_name = args.model
@@ -359,6 +354,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
 
         if model_name in _QWEN3_VARIANTS:
             from kbcraft.embedders.qwen import Qwen3Embedder
+
             variant = _QWEN3_VARIANT_MAP[model_name]
             embedder = Qwen3Embedder(variant=variant, base_url=args.base_url, token=api_token)
             _ = embedder.tokenizer  # load now for accurate timing later
@@ -367,6 +363,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
         else:
             from kbcraft.embedder import OpenAICompatibleEmbedder
             from kbcraft.tokenizer import WhitespaceTokenizer
+
             embedder = OpenAICompatibleEmbedder(
                 base_url=args.base_url, model=model_name, token=api_token
             )

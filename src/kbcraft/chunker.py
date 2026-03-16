@@ -223,9 +223,7 @@ class Chunker:
 
         return chunks
 
-    def chunk_files(
-        self, paths: List[Path], base_dir: Optional[Path] = None
-    ) -> List[Chunk]:
+    def chunk_files(self, paths: List[Path], base_dir: Optional[Path] = None) -> List[Chunk]:
         """Chunk every file in *paths* and return all chunks in order.
 
         Args:

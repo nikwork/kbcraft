@@ -145,9 +145,7 @@ class TestChunkMarkdown:
 class TestChunkFile:
     def test_md_file_uses_markdown_splitter(self, tmp_path):
         f = tmp_path / "doc.md"
-        f.write_text(
-            "# Intro\n\nhello world\n\n# Body\n\nmore text here", encoding="utf-8"
-        )
+        f.write_text("# Intro\n\nhello world\n\n# Body\n\nmore text here", encoding="utf-8")
         chunks = Chunker(max_chunk_tokens=200, chunk_overlap=0).chunk_file(f)
         texts = " ".join(c.text for c in chunks)
         assert "Intro" in texts
@@ -195,9 +193,7 @@ class TestPrependSource:
         sub.mkdir()
         f = sub / "notes.txt"
         f.write_text("hello world", encoding="utf-8")
-        chunks = Chunker(max_chunk_tokens=200, chunk_overlap=0).chunk_file(
-            f, base_dir=tmp_path
-        )
+        chunks = Chunker(max_chunk_tokens=200, chunk_overlap=0).chunk_file(f, base_dir=tmp_path)
         assert "Path: docs/notes.txt" in chunks[0].text
 
     def test_token_count_includes_header(self, tmp_path):
@@ -227,9 +223,7 @@ class TestPrependSource:
         sub.mkdir()
         f = sub / "code.txt"
         f.write_text("hello world", encoding="utf-8")
-        chunks = Chunker(max_chunk_tokens=200, chunk_overlap=0).chunk_files(
-            [f], base_dir=tmp_path
-        )
+        chunks = Chunker(max_chunk_tokens=200, chunk_overlap=0).chunk_files([f], base_dir=tmp_path)
         assert "Path: src/code.txt" in chunks[0].text
 
 
@@ -286,7 +280,7 @@ class TestCustomTokenizer:
             calls.append(len(tokens))
             return tokens
 
-        Chunker(
-            max_chunk_tokens=100, chunk_overlap=0, tokenize=counting_tokenize
-        ).chunk_text("hello world foo")
+        Chunker(max_chunk_tokens=100, chunk_overlap=0, tokenize=counting_tokenize).chunk_text(
+            "hello world foo"
+        )
         assert len(calls) > 0

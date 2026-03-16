@@ -156,8 +156,7 @@ class OllamaTokenizer(BaseTokenizer):
                 data = json.loads(resp.read())
         except urllib.error.URLError as exc:
             raise ConnectionError(
-                f"Cannot reach Ollama at {self._host}. "
-                "Make sure Ollama is running: ollama serve"
+                f"Cannot reach Ollama at {self._host}. " "Make sure Ollama is running: ollama serve"
             ) from exc
         # Response: {"tokens": [1234, 5678, ...]}
         return [str(t) for t in data.get("tokens", [])]

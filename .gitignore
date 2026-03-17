@@ -78,3 +78,6 @@ dmypy.json
 *.faiss
 chroma_data/
 qdrant_data/
+
+vectordb/*
+!vectordb/.gitkeep

@@ -69,10 +69,13 @@ services:
       - ./src:/app/src                    # source code — available for indexing
       - ./tests:/app/tests                # test suite — available for indexing
       - ./kb:/app/kb                      # knowledge base docs — available for indexing
+      - vectordb-data:/app/vectordb       # persist output vector DB files across restarts
     command: ["kbcraft", "--help"]
 
 volumes:
   ollama-models:
     driver: local
   ollama-qwen3-models:
+    driver: local
+  vectordb-data:
     driver: local

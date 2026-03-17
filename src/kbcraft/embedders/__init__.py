@@ -6,6 +6,7 @@ drop-in compatible with ChromaDB and FAISS via the adapter methods.
 """
 
 from kbcraft.embedders.ollama import OllamaEmbedder
+from kbcraft.embedders.openai import OpenAIEmbedder
 from kbcraft.embedders.qwen import Qwen3Embedder
 
-__all__ = ["OllamaEmbedder", "Qwen3Embedder"]
+__all__ = ["OllamaEmbedder", "OpenAIEmbedder", "Qwen3Embedder"]

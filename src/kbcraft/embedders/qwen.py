@@ -126,9 +126,9 @@ class Qwen3Embedder(OpenAICompatibleEmbedder):
         if variant not in QWEN3_MODEL_TAG:
             raise ValueError(f"Unknown Qwen3 variant {variant!r}. Choose one of: {_VARIANTS}")
         super().__init__(
-            base_url=base_url,
             model=QWEN3_MODEL_TAG[variant],
             token=token,
+            base_url=base_url,
         )
         self._variant = variant
         self._dim = QWEN3_DIM[variant]

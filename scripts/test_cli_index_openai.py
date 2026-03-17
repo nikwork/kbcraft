@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-End-to-end CLI smoke test for `kbcraft index` using Qwen3-Embedding-0.6B.
+End-to-end CLI smoke test for `kbcraft index` using OpenAI embeddings.
 
 Runs the full pipeline via the CLI binary (not Python imports):
-  kbcraft index ./kb --embedder openai_compatible --model qwen3-embedding:0.6b \
-      --base-url http://ollama:11434/v1 --output <tmp>
+  kbcraft index ./kb --embedder openai --model text-embedding-3-small \
+      --output <tmp>
 
 Checks:
   1. CLI exits with code 0
@@ -12,11 +12,11 @@ Checks:
   3. FAISS index loads and has the expected vector count
   4. A smoke-test query returns ranked results
 
-Run via Docker Compose (after `docker compose up -d`):
-    docker compose run --rm kbcraft python scripts/test_cli_index_qwen.py
+Run locally (requires OPENAI_API_KEY set or present in .env):
+    python scripts/test_cli_index_openai.py
 
-Run locally (requires `ollama serve` with qwen3-embedding:0.6b pulled):
-    python scripts/test_cli_index_qwen.py
+Persist output to vectordb/:
+    SAVE_VECTORDB=1 python scripts/test_cli_index_openai.py
 """
 
 import json
@@ -32,16 +32,20 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-# Read from docker-compose env vars with sensible local fallbacks.
-_QWEN3_HOST = os.environ.get("QWEN3_HOST", os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
-BASE_URL = _QWEN3_HOST.rstrip("/") + "/v1"
-MODEL = os.environ.get("QWEN3_MODEL", "qwen3-embedding:0.6b")
-MAX_TOKENS = int(os.environ.get("QWEN3_MAX_TOKENS", "32768"))
+MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+MAX_TOKENS = int(os.environ.get("OPENAI_EMBEDDING_MAX_TOKENS", "8191"))
 SOURCE_DIR = PROJECT_ROOT
 
 # When set, output is written here and NOT cleaned up after the run.
 VECTORDB_DIR = PROJECT_ROOT / "vectordb"
 SAVE_OUTPUT = os.environ.get("SAVE_VECTORDB", "").lower() in ("1", "true", "yes")
+
+# Expected embedding dims per model.
+_KNOWN_DIMS = {
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+}
 
 PASS = "  \033[32m✓\033[0m"
 FAIL = "  \033[31m✗\033[0m"
@@ -64,10 +68,9 @@ def check(label: str, condition: bool) -> bool:
 
 def main() -> int:
     log("\n" + "=" * 60)
-    log("  kbcraft — CLI index smoke test (Qwen3-Embedding-0.6B)")
+    log("  kbcraft — CLI index smoke test (OpenAI Embeddings)")
     log("=" * 60)
     log(f"  Source dir   : {SOURCE_DIR}")
-    log(f"  Base URL     : {BASE_URL}")
     log(f"  Model        : {MODEL}")
     log(f"  Max tokens   : {MAX_TOKENS}")
 
@@ -76,7 +79,7 @@ def main() -> int:
         VECTORDB_DIR.mkdir(parents=True, exist_ok=True)
         output_dir = VECTORDB_DIR
     else:
-        output_dir = Path(tempfile.mkdtemp(prefix="kbcraft_qwen_test_"))
+        output_dir = Path(tempfile.mkdtemp(prefix="kbcraft_openai_test_"))
     log(f"  Output dir   : {output_dir}")
     log(f"  Persist output: {SAVE_OUTPUT}")
 
@@ -92,8 +95,6 @@ def main() -> int:
             "openai",
             "--model",
             MODEL,
-            "--base-url",
-            BASE_URL,
             "--lang",
             "markdown",
             "--lang",
@@ -101,7 +102,7 @@ def main() -> int:
             "--output",
             str(output_dir),
             "--name",
-            "test_index_qwen",
+            "test_index_openai",
             "--exclude",
             ".venv/**",
             "--chunk-size",
@@ -123,9 +124,9 @@ def main() -> int:
         # ── 2. Output files ────────────────────────────────────────────────────
         log_section("2. Output files")
 
-        index_file = output_dir / "test_index_qwen.faiss"
-        chunks_file = output_dir / "test_index_qwen_chunks.json"
-        meta_file = output_dir / "test_index_qwen_meta.json"
+        index_file = output_dir / "test_index_openai.faiss"
+        chunks_file = output_dir / "test_index_openai_chunks.json"
+        meta_file = output_dir / "test_index_openai_meta.json"
 
         for path in (index_file, chunks_file, meta_file):
             if not check(f"{path.name} exists", path.exists()):
@@ -146,14 +147,24 @@ def main() -> int:
 
         meta = json.loads(meta_file.read_text(encoding="utf-8"))
         failures += 0 if check(f"model == '{MODEL}'", meta.get("model") == MODEL) else 1
-        failures += 0 if check("embedding_dim == 1024", meta.get("embedding_dim") == 1024) else 1
+
+        expected_dim = _KNOWN_DIMS.get(MODEL)
+        if expected_dim is not None:
+            failures += (
+                0
+                if check(f"embedding_dim == {expected_dim}", meta.get("embedding_dim") == expected_dim)
+                else 1
+            )
+        else:
+            log(f"  (unknown model — skipping embedding_dim check)")
+
         failures += (
             0
             if check(f"total_chunks == {len(chunks)}", meta.get("total_chunks") == len(chunks))
             else 1
         )
 
-        dim = meta.get("embedding_dim", 1024)
+        dim = meta.get("embedding_dim", expected_dim or 1536)
 
         # ── 5. Load FAISS index ────────────────────────────────────────────────
         log_section("5. FAISS index")
@@ -169,9 +180,9 @@ def main() -> int:
             # ── 6. Smoke-test query ────────────────────────────────────────────
             log_section("6. Smoke-test query")
 
-            from kbcraft.embedders.qwen import Qwen3Embedder
+            from kbcraft.embedders.openai import OpenAIEmbedder
 
-            embedder = Qwen3Embedder(variant="0.6b", base_url=BASE_URL, token="")
+            embedder = OpenAIEmbedder(model=MODEL)
             query = "how does the chunker split markdown files"
             log(f"  Query: '{query}'")
 

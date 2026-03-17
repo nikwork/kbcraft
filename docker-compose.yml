@@ -56,6 +56,9 @@ services:
         condition: service_healthy
       qwen3:
         condition: service_healthy
+    env_file:
+      - path: .env
+        required: false           # tolerated if .env is absent
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - MAX_TOKENS=240        # all-minilm context window is 256; ~10 tokens reserved for File/Path header

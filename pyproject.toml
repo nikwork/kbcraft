@@ -20,6 +20,7 @@ packages = [{include = "kbcraft", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.15"
+openai = ">=1.0"
 python-dotenv = ">=1.0"
 tiktoken = ">=0.7"
 faiss-cpu = "^1.13.2"

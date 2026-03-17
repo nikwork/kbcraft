@@ -203,8 +203,12 @@ def _build_parser() -> argparse.ArgumentParser:
     index.add_argument(
         "--base-url",
         metavar="URL",
-        default="http://localhost:11434/v1",
-        help=("Base URL for the OpenAI-compatible endpoint. " "Default: http://localhost:11434/v1"),
+        default="",
+        help=(
+            "Base URL for the OpenAI-compatible endpoint "
+            "(e.g. http://localhost:11434/v1 for Ollama). "
+            "Omit to use the real OpenAI API."
+        ),
     )
     # Chunking
     index.add_argument(
@@ -350,28 +354,37 @@ def _cmd_index(args: argparse.Namespace) -> int:
         tokenizer_label = f"{tok.backend} ({tok.model_name})"
 
     else:  # openai
-        model_name = model_name or "nomic-embed-text"
-
         if model_name in _QWEN3_VARIANTS:
             from kbcraft.embedders.qwen import Qwen3Embedder
 
+            model_name = model_name or list(_QWEN3_VARIANTS)[0]
             variant = _QWEN3_VARIANT_MAP[model_name]
             embedder = Qwen3Embedder(variant=variant, base_url=args.base_url, token=api_token)
             _ = embedder.tokenizer  # load now for accurate timing later
             tokenize_fn = lambda text: embedder.tokenizer.tokenize(text)  # noqa: E731
             tokenizer_label = f"transformers ({model_name})"
-        else:
+        elif args.base_url:
             from kbcraft.embedder import OpenAICompatibleEmbedder
             from kbcraft.tokenizer import WhitespaceTokenizer
 
+            model_name = model_name or "nomic-embed-text"
             embedder = OpenAICompatibleEmbedder(
-                base_url=args.base_url, model=model_name, token=api_token
+                model=model_name, token=api_token, base_url=args.base_url
             )
             tok = WhitespaceTokenizer(model=model_name)
             tokenize_fn = tok.tokenize
             tokenizer_label = "whitespace (approximate)"
+        else:
+            from kbcraft.embedders.openai import OpenAIEmbedder
+            from kbcraft.tokenizer import WhitespaceTokenizer
 
-        backend_label = f"openai  base_url={args.base_url}"
+            model_name = model_name or "text-embedding-3-small"
+            embedder = OpenAIEmbedder(model=model_name, token=api_token)
+            tok = WhitespaceTokenizer(model=model_name)
+            tokenize_fn = tok.tokenize
+            tokenizer_label = "whitespace (approximate)"
+
+        backend_label = f"openai  base_url={args.base_url or 'https://api.openai.com/v1'}"
 
     log("\n" + "=" * 60)
     log("  kbcraft — build FAISS index")

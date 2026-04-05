@@ -26,9 +26,9 @@ Quickstart::
     embedder = Qwen3Embedder(base_url="http://gpu:11434/v1", token="sk-...")
 """
 
-from typing import Dict, Iterator, List
+from typing import Dict, List
 
-from kbcraft.embedder import OpenAICompatibleEmbedder
+from kbcraft.embedder import TokenChunkingEmbedder
 
 # ---------------------------------------------------------------------------
 # Known model metadata
@@ -65,7 +65,7 @@ QWEN3_MAX_TOKENS: Dict[str, int] = {
 _VARIANTS = tuple(QWEN3_MODEL_TAG)
 
 
-class Qwen3Embedder(OpenAICompatibleEmbedder):
+class Qwen3Embedder(TokenChunkingEmbedder):
     """Embed text using a Qwen3-Embedding model via an OpenAI-compatible server.
 
     All three size variants are supported via the *variant* parameter.
@@ -86,10 +86,11 @@ class Qwen3Embedder(OpenAICompatibleEmbedder):
                     Default: ``"http://localhost:11434/v1"`` (Ollama).
         token:      Bearer token for the ``Authorization`` header.
                     Pass ``None`` or ``""`` for unauthenticated local servers.
-        Batches are sized dynamically: chunks are packed into each request
-        until the next chunk would push the total token count over
-        :attr:`max_tokens`.  This maximises throughput without overloading
-        the server.
+
+    Batches are sized dynamically: chunks are packed into each request
+    until the next chunk would push the total token count over
+    :attr:`max_tokens`.  This maximises throughput without overloading
+    the server.
 
     Example::
 
@@ -150,31 +151,8 @@ class Qwen3Embedder(OpenAICompatibleEmbedder):
     def max_tokens(self) -> int:
         return QWEN3_MAX_TOKENS[self._variant]
 
-    def encode(self, texts: List[str]) -> List[List[float]]:
-        """Chunk long texts then encode, splitting into batches as needed.
-
-        Returns one vector per chunk.  Texts within the context window produce
-        exactly one chunk each; longer texts produce two or more.
-        """
-        chunks = self._expand_chunks(texts)
-        results: List[List[float]] = []
-        for batch in self._batches(chunks):
-            results.extend(super().encode(batch))
-        return results
-
-    async def encode_async(self, texts: List[str]) -> List[List[float]]:
-        """Chunk long texts then encode asynchronously, splitting into batches.
-
-        Returns one vector per chunk (see :py:meth:`encode`).
-        """
-        chunks = self._expand_chunks(texts)
-        results: List[List[float]] = []
-        for batch in self._batches(chunks):
-            results.extend(await super().encode_async(batch))
-        return results
-
     # ------------------------------------------------------------------
-    # Tokenizer (transformers.AutoTokenizer)
+    # TokenChunkingEmbedder interface — transformers AutoTokenizer
     # ------------------------------------------------------------------
 
     @property
@@ -215,35 +193,3 @@ class Qwen3Embedder(OpenAICompatibleEmbedder):
         # When return_overflowing_tokens=True the tokenizer returns a list of
         # encodings even for a single input, so input_ids is List[List[int]].
         return [tok.decode(ids, skip_special_tokens=True) for ids in enc["input_ids"]]
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _expand_chunks(self, texts: List[str]) -> List[str]:
-        """Expand *texts* by splitting any text that exceeds :attr:`max_tokens`."""
-        chunks: List[str] = []
-        for text in texts:
-            chunks.extend(self.split_chunks(text))
-        return chunks
-
-    def _batches(self, chunks: List[str]) -> Iterator[List[str]]:
-        """Yield batches of *chunks* sized by token budget.
-
-        Chunks are packed greedily into each batch until the next chunk would
-        push the running token total over :attr:`max_tokens`.  This maximises
-        the number of texts per request without exceeding the model limit.
-        """
-        budget = self.max_tokens
-        batch: List[str] = []
-        batch_tokens = 0
-        for chunk in chunks:
-            n = self.count_tokens(chunk)
-            if batch and batch_tokens + n > budget:
-                yield batch
-                batch = []
-                batch_tokens = 0
-            batch.append(chunk)
-            batch_tokens += n
-        if batch:
-            yield batch

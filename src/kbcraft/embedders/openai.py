@@ -1,7 +1,7 @@
 """
 OpenAI embedding implementation.
 
-Thin wrapper around :class:`~kbcraft.embedder.OpenAICompatibleEmbedder` that
+Thin wrapper around :class:`~kbcraft.embedder.TokenChunkingEmbedder` that
 pre-fills OpenAI defaults, reads credentials from the environment, and
 auto-splits long texts into non-overlapping chunks using ``tiktoken``.
 
@@ -24,9 +24,9 @@ Quickstart::
 """
 
 import os
-from typing import Iterator, List
+from typing import List, Optional
 
-from kbcraft.embedder import OpenAICompatibleEmbedder
+from kbcraft.embedder import TokenChunkingEmbedder
 
 #: Embedding dimensions for known OpenAI models.
 OPENAI_DIMS = {
@@ -54,7 +54,7 @@ _DEFAULT_MAX_TOKENS = 8191
 _DEFAULT_ENCODING = "cl100k_base"
 
 
-class OpenAIEmbedder(OpenAICompatibleEmbedder):
+class OpenAIEmbedder(TokenChunkingEmbedder):
     """Embed text using the OpenAI Embeddings API.
 
     Long texts are automatically split into non-overlapping chunks using
@@ -103,7 +103,7 @@ class OpenAIEmbedder(OpenAICompatibleEmbedder):
     ) -> None:
         resolved_token = token or os.environ.get("OPENAI_API_KEY", "")
         super().__init__(model=model, token=resolved_token)
-        self._dim = OPENAI_DIMS.get(model)  # None → resolved lazily by parent
+        self._dim: Optional[int] = OPENAI_DIMS.get(model)
         self._enc = None  # tiktoken.Encoding, loaded lazily
 
     # ------------------------------------------------------------------
@@ -124,31 +124,8 @@ class OpenAIEmbedder(OpenAICompatibleEmbedder):
     def max_tokens(self) -> int:
         return OPENAI_MAX_TOKENS.get(self._model, _DEFAULT_MAX_TOKENS)
 
-    def encode(self, texts: List[str]) -> List[List[float]]:
-        """Chunk long texts then encode, splitting into batches as needed.
-
-        Returns one vector per chunk.  Texts within the context window produce
-        exactly one chunk each; longer texts produce two or more.
-        """
-        chunks = self._expand_chunks(texts)
-        results: List[List[float]] = []
-        for batch in self._batches(chunks):
-            results.extend(super().encode(batch))
-        return results
-
-    async def encode_async(self, texts: List[str]) -> List[List[float]]:
-        """Chunk long texts then encode asynchronously.
-
-        Returns one vector per chunk (see :py:meth:`encode`).
-        """
-        chunks = self._expand_chunks(texts)
-        results: List[List[float]] = []
-        for batch in self._batches(chunks):
-            results.extend(await super().encode_async(batch))
-        return results
-
     # ------------------------------------------------------------------
-    # Tokenizer (tiktoken)
+    # TokenChunkingEmbedder interface — tiktoken tokenizer
     # ------------------------------------------------------------------
 
     @property
@@ -183,34 +160,3 @@ class OpenAIEmbedder(OpenAICompatibleEmbedder):
         for i in range(0, len(token_ids), limit):
             chunks.append(self.tokenizer.decode(token_ids[i : i + limit]))
         return chunks
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _expand_chunks(self, texts: List[str]) -> List[str]:
-        """Expand *texts* by splitting any text that exceeds :attr:`max_tokens`."""
-        chunks: List[str] = []
-        for text in texts:
-            chunks.extend(self.split_chunks(text))
-        return chunks
-
-    def _batches(self, chunks: List[str]) -> Iterator[List[str]]:
-        """Yield batches of *chunks* sized by token budget.
-
-        Chunks are packed greedily until the next chunk would push the running
-        total over :attr:`max_tokens`.
-        """
-        budget = self.max_tokens
-        batch: List[str] = []
-        batch_tokens = 0
-        for chunk in chunks:
-            n = self.count_tokens(chunk)
-            if batch and batch_tokens + n > budget:
-                yield batch
-                batch = []
-                batch_tokens = 0
-            batch.append(chunk)
-            batch_tokens += n
-        if batch:
-            yield batch

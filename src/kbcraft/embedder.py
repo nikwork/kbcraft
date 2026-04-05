@@ -8,7 +8,7 @@ plus HybridOutput for models that support both dense and sparse vectors
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, Iterator, List, Optional
 
 
 @dataclass
@@ -236,7 +236,7 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
         self._base_url = base_url or ""
         self._model = model
         self._token = token or ""
-        self._dim: int = None  # type: ignore[assignment]
+        self._dim: Optional[int] = None
 
     # ------------------------------------------------------------------
     # BaseEmbedder interface
@@ -277,6 +277,115 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
         """Asynchronously embed *texts*, sending all inputs in one request."""
         response = await self._async_client().embeddings.create(model=self._model, input=texts)
         return [item.embedding for item in sorted(response.data, key=lambda d: d.index)]
+
+
+class TokenChunkingEmbedder(OpenAICompatibleEmbedder, ABC):
+    """Intermediate base for OpenAI-compatible embedders that need token-aware
+    chunking and greedy batching before sending requests to the server.
+
+    Subclasses must implement three members:
+
+    - :py:attr:`tokenizer` — lazily loaded tokenizer instance (any type)
+    - :py:meth:`count_tokens` — exact token count for a single string
+    - :py:meth:`split_chunks` — split one string into context-window-sized pieces
+
+    ``encode()`` and ``encode_async()`` are overridden here to transparently
+    expand texts that exceed :attr:`max_tokens` and pack the resulting chunks
+    into greedy token-budget batches before delegating to
+    :class:`OpenAICompatibleEmbedder`.
+
+    Minimal concrete implementation::
+
+        class MyEmbedder(TokenChunkingEmbedder):
+            @property
+            def tokenizer(self):
+                return my_tokenizer
+
+            def count_tokens(self, text: str) -> int:
+                return len(self.tokenizer.encode(text))
+
+            def split_chunks(self, text: str) -> List[str]:
+                ...  # tokenize, slice, decode
+    """
+
+    # ------------------------------------------------------------------
+    # Abstract interface — tokenizer contract
+    # ------------------------------------------------------------------
+
+    @property
+    @abstractmethod
+    def tokenizer(self):
+        """Lazily loaded tokenizer instance for this model."""
+        ...
+
+    @abstractmethod
+    def count_tokens(self, text: str) -> int:
+        """Return the exact token count for *text*."""
+        ...
+
+    @abstractmethod
+    def split_chunks(self, text: str) -> List[str]:
+        """Split *text* into non-overlapping chunks that each fit within :attr:`max_tokens`.
+
+        A single text that already fits must be returned as a one-element list.
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # encode / encode_async — chunking + batching wrappers
+    # ------------------------------------------------------------------
+
+    def encode(self, texts: List[str]) -> List[List[float]]:
+        """Expand long texts into chunks, then encode in token-budget batches.
+
+        Returns one vector per chunk.  Texts within the context window produce
+        exactly one chunk each; longer texts produce two or more.
+        """
+        chunks = self._expand_chunks(texts)
+        results: List[List[float]] = []
+        for batch in self._batches(chunks):
+            results.extend(super().encode(batch))
+        return results
+
+    async def encode_async(self, texts: List[str]) -> List[List[float]]:
+        """Async variant of :py:meth:`encode` — same chunking and batching logic."""
+        chunks = self._expand_chunks(texts)
+        results: List[List[float]] = []
+        for batch in self._batches(chunks):
+            results.extend(await super().encode_async(batch))
+        return results
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _expand_chunks(self, texts: List[str]) -> List[str]:
+        """Expand *texts* by splitting any text that exceeds :attr:`max_tokens`."""
+        chunks: List[str] = []
+        for text in texts:
+            chunks.extend(self.split_chunks(text))
+        return chunks
+
+    def _batches(self, chunks: List[str]) -> Iterator[List[str]]:
+        """Yield token-budget batches of *chunks* packed greedily.
+
+        Chunks are accumulated into each batch until the next chunk would push
+        the running token total over :attr:`max_tokens`, at which point the
+        current batch is yielded and a new one started.
+        """
+        budget = self.max_tokens
+        batch: List[str] = []
+        batch_tokens = 0
+        for chunk in chunks:
+            n = self.count_tokens(chunk)
+            if batch and batch_tokens + n > budget:
+                yield batch
+                batch = []
+                batch_tokens = 0
+            batch.append(chunk)
+            batch_tokens += n
+        if batch:
+            yield batch
 
 
 class ChromaEmbeddingFunction:

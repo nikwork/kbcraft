@@ -308,6 +308,87 @@ docker compose down
 
 ---
 
+## Dev Container (VS Code Remote SSH)
+
+`docker-compose.dev.yml` provides a self-contained development environment with:
+
+- Full project source mounted at `/app` and installed in **editable mode** — every change you save on the host is immediately visible inside the container with no rebuild.
+- All dependencies including dev tools (`pytest`, `black`, `ruff`, `mypy`, `poetry`).
+- An OpenSSH server on port **2222** with **no credentials required** (empty root password). Never expose this port to the public internet.
+- Environment variables pre-wired to the Ollama servers on the host (`host.docker.internal`).
+
+### Start the dev container
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+The first run builds the image and installs all Python dependencies (~2 min).
+Subsequent starts reuse the cached image and the `venv-dev` named volume.
+
+### Configure VS Code
+
+Install the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension, then add this block once to your `~/.ssh/config`:
+
+```
+Host kbcraft-dev
+  HostName localhost
+  Port 2222
+  User root
+  StrictHostKeyChecking no
+```
+
+Open the Remote-SSH panel in VS Code (`Ctrl+Shift+P` → *Remote-SSH: Connect to Host*) and select **kbcraft-dev**. VS Code installs its server on the first connection and then opens a full remote workspace at `/app`.
+
+### Connect via plain SSH
+
+```bash
+ssh root@localhost -p 2222   # press Enter when asked for a password
+```
+
+### Run tests and tools inside the container
+
+The project `.venv` is on `PATH`, so you can call all tools directly:
+
+```bash
+pytest                        # run the test suite
+black src/ tests/             # format
+ruff check src/ tests/        # lint
+mypy src/kbcraft              # type-check
+kbcraft --help                # CLI entry point
+```
+
+Or via Poetry:
+
+```bash
+poetry run pytest
+poetry run kbcraft index ./kb --embedder ollama --output /tmp/test_idx
+```
+
+### Ollama connectivity from the dev container
+
+The dev container connects to Ollama via `host.docker.internal`, which resolves to your host machine. If the main stack is already running (`docker compose up -d`), the models are available at:
+
+| Variable | Value |
+|---|---|
+| `OLLAMA_HOST` | `http://host.docker.internal:11434` |
+| `QWEN3_HOST` | `http://host.docker.internal:11435` |
+
+### Stop the dev container
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+The `venv-dev` volume is preserved so the next start skips dependency installation. To do a full clean rebuild:
+
+```bash
+docker compose -f docker-compose.dev.yml down -v
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+---
+
 ## Building a vector index with `kbcraft index`
 
 The `index` command runs the full pipeline — file selection, chunking, embedding, and FAISS index creation — in a single command and writes the result to a local directory.

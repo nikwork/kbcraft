@@ -1,0 +1,42 @@
+# kbcraft — standalone dev container (VS Code Remote SSH)
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d --build
+#   docker compose -f docker-compose.dev.yml down
+#
+# Connect (no credentials required):
+#   ssh root@localhost -p 2222
+#
+# VS Code — add once to ~/.ssh/config, then Remote-SSH → kbcraft-dev:
+#   Host kbcraft-dev
+#     HostName localhost
+#     Port 2222
+#     User root
+#     StrictHostKeyChecking no
+#
+# The full project is mounted at /app and installed in editable mode,
+# so every source change on the host is immediately visible inside.
+
+services:
+  devcontainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: kbcraft-dev
+    ports:
+      - "2222:22"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - QWEN3_HOST=http://host.docker.internal:11435
+      - QWEN3_MODEL=qwen3-embedding:0.6b
+      - QWEN3_MAX_TOKENS=32768
+    volumes:
+      - .:/app                   # full project — editable install from mounted source
+      - venv-dev:/app/.venv      # venv lives in a named volume, not the bind mount
+
+volumes:
+  venv-dev:
+    driver: local

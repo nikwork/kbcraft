@@ -1,0 +1,67 @@
+##############################################################################
+# kbcraft — development image
+#
+# Local-only dev container with an OpenSSH server and the full dev toolchain.
+# Source code is mounted as a volume at /app — edits on the host are
+# immediately reflected inside the container without a rebuild.
+#
+# No credentials required: root login with an empty password.
+# Never expose port 2222 to the public internet.
+#
+# Build & start:
+#   docker compose --profile dev up -d devcontainer
+#
+# Connect via plain SSH:
+#   ssh root@localhost -p 2222
+#
+# Connect via VS Code:
+#   Add to ~/.ssh/config:
+#     Host kbcraft-dev
+#       HostName localhost
+#       Port 2222
+#       User root
+#   Then: Remote-SSH → Connect to Host → kbcraft-dev
+##############################################################################
+
+FROM python:3.12-slim
+
+# ── System packages ───────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssh-server \
+        git \
+        curl \
+        vim \
+        make \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── SSH: root login, no password required ─────────────────────────────────────
+RUN mkdir -p /var/run/sshd \
+    && passwd -d root \
+    && sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/'          /etc/ssh/sshd_config \
+    && sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#*PermitEmptyPasswords.*/PermitEmptyPasswords yes/' /etc/ssh/sshd_config \
+    # VS Code Remote SSH needs a login shell to pick up PATH
+    && echo "PermitUserEnvironment yes" >> /etc/ssh/sshd_config
+
+# ── Poetry ────────────────────────────────────────────────────────────────────
+RUN pip install --no-cache-dir poetry==1.8.3
+
+# ── Python dependencies (cached until lock file changes) ─────────────────────
+WORKDIR /app
+
+COPY pyproject.toml poetry.lock README.md ./
+
+RUN poetry config virtualenvs.in-project true \
+    && poetry install --with dev --no-root --no-interaction --no-ansi
+
+# Expose the venv PATH in every shell session (login and non-login)
+ENV PATH="/app/.venv/bin:$PATH"
+RUN echo 'export PATH="/app/.venv/bin:$PATH"' >> /etc/profile \
+    && echo 'export PATH="/app/.venv/bin:$PATH"' >> /root/.bashrc
+
+EXPOSE 22
+
+COPY docker/dev/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

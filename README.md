@@ -1263,3 +1263,436 @@ poetry run pytest --cov=kbcraft --cov-report=term-missing
 poetry run pytest --cov=kbcraft --cov-report=html
 open htmlcov/index.html
 ```
+
+---
+
+## Embedder Class Hierarchy
+
+kbcraft's embedding layer is organised as a four-class hierarchy rooted in
+`kbcraft.embedder`. Every public embedder in `kbcraft.embedders` shares the same
+interface and the same vector-store adapters, so they are drop-in replacements
+for one another.
+
+### Class tree
+
+```
+BaseEmbedder (ABC)                          kbcraft.embedder
+│  encode(texts) → List[List[float]]
+│  encode_query(text) → List[float]
+│  encode_documents(texts) → List[List[float]]
+│  encode_hybrid(texts) → HybridOutput
+│  as_chroma_ef() → ChromaEmbeddingFunction
+│  as_faiss_matrix(texts) → np.ndarray
+│
+├── OllamaEmbedder                          kbcraft.embedders.ollama
+│     REST / urllib · no ML deps
+│     Models: nomic-embed-text, mxbai-embed-large, bge-m3, all-minilm …
+│
+└── OpenAICompatibleEmbedder                kbcraft.embedder
+      openai SDK · sync + async
+      │
+      └── TokenChunkingEmbedder (ABC)       kbcraft.embedder
+            token-aware chunking + greedy token-budget batching
+            abstract: tokenizer · count_tokens · split_chunks
+            │
+            ├── OpenAIEmbedder              kbcraft.embedders.openai
+            │     tiktoken tokenizer
+            │     Models: text-embedding-3-small/large, ada-002
+            │
+            └── Qwen3Embedder               kbcraft.embedders.qwen
+                  transformers AutoTokenizer
+                  Variants: 0.6b · 4b · 8b
+```
+
+### BaseEmbedder — the common interface
+
+Every embedder exposes these members regardless of backend:
+
+| Member | Kind | Description |
+|---|---|---|
+| `embedding_dim` | property | Output vector dimensionality |
+| `model_name` | property | Human-readable model identifier |
+| `max_tokens` | property | Maximum input tokens accepted; default `512` |
+| `encode(texts)` | method | Symmetric batch encode — no instruction prefix |
+| `encode_query(text)` | method | Asymmetric encode for a **search query** — may prepend a query prefix |
+| `encode_documents(texts)` | method | Asymmetric encode for **indexed documents** — may prepend a document prefix |
+| `encode_hybrid(texts)` | method | Dense + sparse vectors in one pass (BGE-M3 style) |
+| `as_chroma_ef()` | method | Return a ChromaDB-compatible `EmbeddingFunction` wrapper |
+| `as_faiss_matrix(texts)` | method | Encode and return a `float32` numpy array for `faiss.Index.add()` |
+
+#### encode vs encode\_query vs encode\_documents vs encode\_hybrid
+
+These four methods exist because modern embedding models are not all alike.
+Understanding the difference matters for retrieval quality.
+
+---
+
+**`encode(texts)` — symmetric encoding**
+
+Encodes a batch of strings **without any instruction prefix**. Use this when
+query and document come from the same distribution, i.e. you want similar
+texts to cluster together regardless of their role:
+
+- Deduplication / near-duplicate detection
+- Clustering a document corpus
+- Semantic similarity between two passages of the same type
+
+```python
+vecs = embedder.encode(["The quick brown fox", "A fast orange fox"])
+# Both encoded the same way — cosine similarity measures topical overlap
+```
+
+---
+
+**`encode_query(text)` and `encode_documents(texts)` — asymmetric retrieval**
+
+Many high-quality embedding models are trained with **asymmetric retrieval** in
+mind. A short natural-language question and a long technical passage should end
+up close in vector space even though they look nothing alike as raw text.
+To achieve this, these models expect a short instruction prefix that tells the
+model **what role the text plays**:
+
+| Model | Query prefix | Document prefix |
+|---|---|---|
+| `nomic-embed-text` | `"search_query: "` | `"search_document: "` |
+| `mxbai-embed-large` | `"Represent this sentence for searching relevant passages: "` | *(none)* |
+| `bge-m3`, `all-minilm` | *(none)* | *(none)* |
+
+`OllamaEmbedder` applies the correct prefix automatically based on the model
+name. `encode()` deliberately skips all prefixes.
+
+The rule of thumb: **always use `encode_query` for the user's question and
+`encode_documents` for the passages you are indexing**. If you call `encode()`
+for both, retrieval quality degrades silently for prefix-sensitive models.
+
+```python
+# Building an index — use encode_documents
+doc_vecs = embedder.encode_documents([
+    "try:\n    risky_call()\nexcept Exception as e:\n    handle(e)",
+    "Use try/except to catch exceptions in Python.",
+])
+
+# At query time — use encode_query
+query_vec = embedder.encode_query("how to handle errors in Python")
+
+# Both are now in the same asymmetric embedding space → good retrieval
+```
+
+---
+
+**`encode_hybrid(texts)` — dense + sparse in one pass**
+
+Some models (BGE-M3 via FlagEmbedding) produce **two kinds of vectors
+simultaneously**:
+
+- **Dense vectors** (`List[List[float]]`) — fixed-length floating-point vectors
+  used for approximate nearest-neighbour (ANN) search. They capture *semantic*
+  meaning; synonyms and paraphrases are close.
+- **Sparse vectors** (`List[Dict[int, float]]`) — variable-length maps of
+  `token_id → weight`, similar to BM25. They capture *lexical* meaning; exact
+  keyword matches score high.
+
+Combining both (hybrid search) typically outperforms either alone, especially
+for code search where exact identifiers matter.
+
+```python
+# Only works on embedders that override this method (e.g. a BGE-M3 embedder)
+output = embedder.encode_hybrid(["faiss.IndexFlatL2", "cosine similarity"])
+
+output.dense   # List[List[float]] — for ANN index
+output.sparse  # List[Dict[int, float]] — for inverted index / BM25 fusion
+output.texts   # original input preserved
+
+# All other embedders raise NotImplementedError
+```
+
+`HybridOutput` is a dataclass defined in `kbcraft.embedder`:
+
+```python
+from kbcraft.embedder import HybridOutput
+
+@dataclass
+class HybridOutput:
+    dense:  List[List[float]]         # shape (N, embedding_dim)
+    sparse: List[Dict[int, float]]    # token_id → importance weight
+    texts:  List[str]                 # original inputs
+```
+
+### OllamaEmbedder
+
+Wraps a locally running [Ollama](https://ollama.com) server via its REST API using
+only stdlib `urllib`. No Python ML dependencies — all inference happens inside Ollama.
+
+**Constructor parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `str` | `"nomic-embed-text"` | Ollama model name (must be pulled first with `ollama pull <model>`) |
+| `host` | `str` | `"http://localhost:11434"` | Ollama server base URL |
+| `timeout` | `float` | `60.0` | HTTP request timeout in seconds |
+| `batch_size` | `int` | `32` | Maximum texts per HTTP request; large lists are split automatically |
+| `query_prefix` | `Optional[str]` | `None` | Override the query instruction prefix; `None` uses the model default |
+| `document_prefix` | `Optional[str]` | `None` | Override the document instruction prefix; `None` uses the model default |
+
+**Known models**
+
+| Model | Dims | Max tokens | Notes |
+|---|---|---|---|
+| `nomic-embed-text` | 768 | 8 192 | Good EN + RU + Code; recommended starting point |
+| `mxbai-embed-large` | 1 024 | 512 | High EN quality; short context window |
+| `bge-m3` | 1 024 | 8 192 | Multilingual; also supports hybrid search |
+| `snowflake-arctic-embed` | 1 024 | 512 | Strong EN retrieval quality |
+| `all-minilm` | 384 | 256 | Tiny and fast; limited multilingual support |
+
+**Usage**
+
+```python
+from kbcraft.embedders import OllamaEmbedder
+
+embedder = OllamaEmbedder()                              # nomic-embed-text, localhost
+embedder = OllamaEmbedder(model="bge-m3")                # different model
+embedder = OllamaEmbedder(host="http://gpu-box:11434")   # remote server
+embedder = OllamaEmbedder(model="all-minilm", batch_size=64)  # larger batches
+
+# Asymmetric retrieval — query and document paths are distinct
+query_vec = embedder.encode_query("how to handle errors in Python")
+doc_vecs  = embedder.encode_documents([
+    "try:\n    risky_call()\nexcept Exception as e:\n    handle(e)",
+    "Use try/except to catch exceptions in Python.",
+])
+
+# Symmetric tasks — plain batch, no prefix
+vecs = embedder.encode(["hello world", "foo bar"])
+
+# Large lists are split into batches of batch_size automatically
+vecs = embedder.encode(list_of_1000_texts)
+```
+
+### OpenAIEmbedder
+
+Wraps the [OpenAI Embeddings API](https://platform.openai.com/docs/guides/embeddings).
+Long texts are **automatically split into non-overlapping chunks** using `tiktoken`
+before being sent to the API. `encode()` returns one vector per chunk, so the output
+list may be longer than the input list when any text exceeds `max_tokens`.
+
+Requires `pip install tiktoken openai` (included in `poetry install --all-extras`).
+
+**Constructor parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `str` | `"text-embedding-3-small"` | OpenAI model name |
+| `token` | `str` | `""` | API key; falls back to the `OPENAI_API_KEY` environment variable |
+
+**Known models**
+
+| Model | Dims | Max tokens | Notes |
+|---|---|---|---|
+| `text-embedding-3-small` | 1 536 | 8 191 | Default; best cost/quality ratio |
+| `text-embedding-3-large` | 3 072 | 8 191 | Highest quality |
+| `text-embedding-ada-002` | 1 536 | 8 191 | Legacy; prefer `3-small` for new projects |
+
+**Usage**
+
+```python
+from kbcraft.embedders import OpenAIEmbedder
+
+embedder = OpenAIEmbedder()                                # reads OPENAI_API_KEY
+embedder = OpenAIEmbedder(model="text-embedding-3-large")  # higher quality
+embedder = OpenAIEmbedder(token="sk-...")                  # explicit key
+
+# Synchronous
+vecs = embedder.encode(["Hello world", "Foo bar"])
+
+# Asynchronous
+vecs = await embedder.encode_async(["Hello world"])
+
+# Token helpers (tiktoken-backed)
+n     = embedder.count_tokens("some long text")
+parts = embedder.split_chunks(very_long_string)  # one element per context window
+```
+
+### Qwen3Embedder
+
+Wraps any OpenAI-compatible server running a
+[Qwen3-Embedding](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) model
+(Ollama, vLLM, LM Studio, …). Uses the official `transformers` tokenizer for
+exact token counting and automatic context-window chunking. All three size
+variants share the same 32 768-token context window.
+
+Requires `pip install transformers openai` (included in `poetry install --all-extras`).
+
+**Constructor parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `variant` | `str` | `"0.6b"` | Model size: `"0.6b"`, `"4b"`, or `"8b"` |
+| `base_url` | `str` | `"http://localhost:11434/v1"` | OpenAI-compatible server base URL |
+| `token` | `str` | `""` | Bearer token; `""` for local unauthenticated servers |
+
+**Variants**
+
+| Variant | Dims | Max tokens | HuggingFace repo |
+|---|---|---|---|
+| `"0.6b"` | 1 024 | 32 768 | `Qwen/Qwen3-Embedding-0.6B` |
+| `"4b"` | 2 560 | 32 768 | `Qwen/Qwen3-Embedding-4B` |
+| `"8b"` | 4 096 | 32 768 | `Qwen/Qwen3-Embedding-8B` |
+
+**Usage**
+
+```python
+from kbcraft.embedders import Qwen3Embedder
+
+# Default: 0.6b served by local Ollama
+# ollama pull qwen3-embedding:0.6b && ollama serve
+embedder = Qwen3Embedder()
+
+# Larger variant on a remote GPU server
+embedder = Qwen3Embedder(variant="4b", base_url="http://gpu-box:11434/v1")
+
+# Synchronous
+vecs = embedder.encode(["Hello world"])
+
+# Asynchronous
+vecs = await embedder.encode_async(["Hello world"])
+
+# Token helpers (transformers AutoTokenizer-backed)
+n     = embedder.count_tokens("some long text")
+parts = embedder.split_chunks(very_long_string)  # one element per context window
+```
+
+### TokenChunkingEmbedder — the shared chunking base
+
+`OpenAIEmbedder` and `Qwen3Embedder` both inherit from `TokenChunkingEmbedder`,
+which is itself abstract. It owns the shared logic:
+
+- **`_expand_chunks(texts)`** — calls `split_chunks()` on each text; texts that fit
+  within `max_tokens` produce exactly one chunk, longer texts produce two or more.
+- **`_batches(chunks)`** — packs chunks greedily into requests until the running
+  token count would exceed `max_tokens`, then yields the batch and starts a new one.
+- **`encode(texts)`** and **`encode_async(texts)`** — orchestrate expand → batch → call
+  `OpenAICompatibleEmbedder.encode()` per batch.
+
+Subclasses must implement three abstract members:
+
+| Member | Description |
+|---|---|
+| `tokenizer` (property) | Lazily loaded tokenizer instance |
+| `count_tokens(text)` | Return the exact integer token count for a string |
+| `split_chunks(text)` | Split a string into a list of context-window-sized pieces |
+
+### Vector store adapters
+
+All embedders expose two adapter methods with no extra boilerplate:
+
+**ChromaDB**
+
+```python
+import chromadb
+from kbcraft.embedders import OllamaEmbedder
+
+embedder = OllamaEmbedder()
+client = chromadb.Client()
+collection = client.get_or_create_collection(
+    "my_docs",
+    embedding_function=embedder.as_chroma_ef(),
+)
+collection.add(documents=["doc1", "doc2"], ids=["1", "2"])
+results = collection.query(query_texts=["search term"], n_results=3)
+```
+
+**FAISS**
+
+```python
+import faiss, numpy as np
+from kbcraft.embedders import OllamaEmbedder
+
+embedder = OllamaEmbedder()
+index = faiss.IndexFlatL2(embedder.embedding_dim)
+index.add(embedder.as_faiss_matrix(["doc1", "doc2", "doc3"]))
+
+q = np.array([embedder.encode_query("search term")], dtype=np.float32)
+distances, ids = index.search(q, k=3)
+```
+
+### Choosing an embedder
+
+| Scenario | Recommended choice |
+|---|---|
+| Local / air-gapped / CPU-only | `OllamaEmbedder(model="all-minilm")` — tiny, 22 MB |
+| Local, better quality | `OllamaEmbedder(model="nomic-embed-text")` — 768-dim, balanced |
+| Best local multilingual | `OllamaEmbedder(model="bge-m3")` or `Qwen3Embedder(variant="4b")` |
+| Very long documents (> 8k tokens) | `Qwen3Embedder` — all variants support 32 768-token windows |
+| OpenAI-hosted, cost-conscious | `OpenAIEmbedder()` — `text-embedding-3-small` |
+| OpenAI-hosted, highest quality | `OpenAIEmbedder(model="text-embedding-3-large")` |
+| Self-hosted OpenAI-compatible server | `Qwen3Embedder(base_url="http://...", variant="...")` |
+
+### Writing a custom embedder
+
+**Minimal — new backend without chunking:**
+
+```python
+from kbcraft.embedder import BaseEmbedder
+from typing import List
+
+class MyEmbedder(BaseEmbedder):
+    @property
+    def embedding_dim(self) -> int:
+        return 768
+
+    @property
+    def model_name(self) -> str:
+        return "my-custom-model"
+
+    def encode(self, texts: List[str]) -> List[List[float]]:
+        return my_backend.embed(texts)
+```
+
+**With token-aware chunking on an OpenAI-compatible server:**
+
+Subclass `TokenChunkingEmbedder` and implement the tokenizer contract.
+`encode()`, `encode_async()`, `_expand_chunks()`, and `_batches()` are
+all provided by the base class.
+
+```python
+from kbcraft.embedder import TokenChunkingEmbedder
+from typing import List, Optional
+
+class MyChunkingEmbedder(TokenChunkingEmbedder):
+    def __init__(self) -> None:
+        super().__init__(model="my-model", token="", base_url="http://localhost/v1")
+        self._tok = None
+        self._dim: Optional[int] = None
+
+    @property
+    def embedding_dim(self) -> int:
+        if self._dim is None:
+            self._dim = len(self.encode(["probe"])[0])
+        return self._dim
+
+    @property
+    def model_name(self) -> str:
+        return "my-chunking-model"
+
+    @property
+    def max_tokens(self) -> int:
+        return 4096
+
+    @property
+    def tokenizer(self):
+        if self._tok is None:
+            from transformers import AutoTokenizer
+            self._tok = AutoTokenizer.from_pretrained("my-org/my-model")
+        return self._tok
+
+    def count_tokens(self, text: str) -> int:
+        return len(self.tokenizer.encode(text, add_special_tokens=False))
+
+    def split_chunks(self, text: str) -> List[str]:
+        ids = self.tokenizer.encode(text, add_special_tokens=False)
+        limit = self.max_tokens
+        return [
+            self.tokenizer.decode(ids[i : i + limit])
+            for i in range(0, len(ids), limit)
+        ]
+```

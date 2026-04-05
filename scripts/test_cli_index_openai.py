@@ -152,7 +152,9 @@ def main() -> int:
         if expected_dim is not None:
             failures += (
                 0
-                if check(f"embedding_dim == {expected_dim}", meta.get("embedding_dim") == expected_dim)
+                if check(
+                    f"embedding_dim == {expected_dim}", meta.get("embedding_dim") == expected_dim
+                )
                 else 1
             )
         else:
@@ -209,6 +211,7 @@ def main() -> int:
 
     finally:
         if not SAVE_OUTPUT:
+            log(f"Clear destination folder: {output_dir}")
             shutil.rmtree(output_dir, ignore_errors=True)
 
     # ── Summary ────────────────────────────────────────────────────────────────

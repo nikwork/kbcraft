@@ -554,6 +554,95 @@ TEST_MODEL=nomic-embed-text docker compose run --rm kbcraft python scripts/test_
 
 ---
 
+## End-to-end: FAISS + OpenAI + S3 (MinIO)
+
+`scripts/e2e_faiss_s3.sh` exercises the full pipeline against real services in a
+single command: it brings up an S3-compatible store, builds a FAISS index from
+a few sample Markdown files using the **real OpenAI Embeddings API**, and
+uploads the resulting artifacts to the bucket via **boto3**. Re-running is
+idempotent — the bucket and named volume are reused.
+
+### What the script does
+
+| Step | Action | How |
+|---|---|---|
+| 1 | Start S3 service | `docker compose -f docker-compose.dev.yml up -d minio` (the `s3-init` sibling auto-creates the default bucket) |
+| 2 | Ensure target bucket | `boto3.client("s3").head_bucket / create_bucket` against `http://localhost:9000` |
+| 3 | Seed sample docs | Writes `intro.md` and `usage.md` under `.e2e/docs/` |
+| 4 | Build FAISS index | `kbcraft index … --embedder openai --model text-embedding-3-small` (1536-dim, flat-L2) |
+| 5 | Upload artifacts | `boto3.upload_file()` for `index.faiss`, `index_chunks.json`, `index_meta.json` |
+| 6 | Verify | `boto3.list_objects_v2()` prints `Size  Key` for every object now in the bucket |
+
+### Prerequisites
+
+- Docker Compose (the `minio` and `s3-init` services from `docker-compose.dev.yml`)
+- Poetry with the `s3` extra installed: `poetry install --extras s3 --extras faiss`
+- `curl` on `PATH` (used to wait for MinIO's `/minio/health/live` endpoint)
+- A populated `.env` at the repo root — the script auto-loads it via `set -a; source .env; set +a`
+
+### Required `.env` keys
+
+```bash
+# OpenAI Embeddings API
+OPENAI_API_KEY=sk-...
+
+# S3 / MinIO connection — defaults match docker-compose.dev.yml
+AWS_ACCESS_KEY_ID=minioadmin
+AWS_SECRET_ACCESS_KEY=minioadmin
+AWS_DEFAULT_REGION=us-east-1
+STORAGE_S3_ENDPOINT_URL=http://localhost:9000
+STORAGE_BACKEND=s3
+KBCRAFT_S3_BUCKET=kbcraft-e2e
+```
+
+`.env.example` ships with the same block — copy it to `.env` and fill in
+`OPENAI_API_KEY`. Every variable falls back to a sensible default in the
+script (`${VAR:-default}`) so a partial `.env` still works.
+
+### Run it
+
+```bash
+./scripts/e2e_faiss_s3.sh
+```
+
+Expected tail of the output:
+
+```
+── 5. uploading to s3://kbcraft-e2e/ via boto3
+     uploaded s3://kbcraft-e2e/index.faiss
+     uploaded s3://kbcraft-e2e/index_chunks.json
+     uploaded s3://kbcraft-e2e/index_meta.json
+── 6. listing s3://kbcraft-e2e/ via boto3
+          12333  index.faiss
+            781  index_chunks.json
+            222  index_meta.json
+
+done. minio console: http://localhost:9001  (minioadmin / minioadmin)
+```
+
+Open the console at `http://localhost:9001` (creds `minioadmin` / `minioadmin`)
+to browse the bucket. The `minio-data` named volume preserves objects across
+`docker compose down` (use `down -v` to wipe).
+
+### Pointing at real AWS instead of MinIO
+
+The script doesn't hardcode an endpoint — change four `.env` variables and
+re-run:
+
+```bash
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_DEFAULT_REGION=us-west-2
+STORAGE_S3_ENDPOINT_URL=          # leave blank → boto3 hits real AWS
+KBCRAFT_S3_BUCKET=my-real-bucket
+```
+
+You can skip step 1 (no MinIO needed) by exporting `SKIP_COMPOSE=1` and
+manually editing the script — for now, the simplest workaround is to comment
+out the `docker compose up` line when targeting real AWS.
+
+---
+
 ## Testing OllamaEmbedder
 
 ### Run the smoke test (via Docker Compose)

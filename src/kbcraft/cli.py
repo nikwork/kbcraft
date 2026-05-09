@@ -100,6 +100,56 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # ------------------------------------------------------------------ #
+    # config — manage configs/*.yaml from a single user file               #
+    # ------------------------------------------------------------------ #
+    config = subparsers.add_parser(
+        "config",
+        help="Manage kbcraft configs/*.yaml from a single user-supplied file.",
+    )
+    config_sub = config.add_subparsers(dest="config_command")
+
+    apply = config_sub.add_parser(
+        "apply",
+        help="Reset configs/*.yaml from a single combined user config file.",
+        description=(
+            "Read a single yaml file with top-level sections `embedding`, "
+            "`storage`, `vector_store` and overwrite the matching files in "
+            "configs/. Each section present is written as the *entire* content "
+            "of its target file — unspecified options revert to dataclass "
+            "defaults at load time. Sections omitted from the user file are "
+            "left untouched on disk."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Example user config:\n"
+            "  embedding:\n"
+            "    active_model: nomic-embed-text\n"
+            "    backends:\n"
+            "      ollama: {host: http://localhost:11434, timeout: 60}\n"
+            "  storage:\n"
+            "    active_backend: s3\n"
+            "  vector_store:\n"
+            "    active_backend: faiss\n"
+        ),
+    )
+    apply.add_argument(
+        "file",
+        metavar="FILE",
+        help="Path to the combined user config yaml.",
+    )
+    apply.add_argument(
+        "--configs-dir",
+        metavar="DIR",
+        default="configs",
+        help="Target configs directory. Default: ./configs",
+    )
+    apply.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be written without modifying any files.",
+    )
+
+    # ------------------------------------------------------------------ #
     # index — full pipeline: select → chunk → embed → FAISS               #
     # ------------------------------------------------------------------ #
     index = subparsers.add_parser(
@@ -286,6 +336,72 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         print(f.relative_to(source_dir.resolve()))
 
     print(f"\n{len(files)} file(s) matched.", file=sys.stderr)
+    return 0
+
+
+_CONFIG_SECTIONS = {
+    "embedding": "embedding.yaml",
+    "storage": "storage.yaml",
+    "vector_store": "vector_store.yaml",
+}
+
+
+def _cmd_config_apply(args: argparse.Namespace) -> int:
+    try:
+        import yaml
+    except ImportError:
+        print("error: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
+        return 1
+
+    user_file = Path(args.file)
+    if not user_file.is_file():
+        print(f"error: '{user_file}' is not a file", file=sys.stderr)
+        return 1
+
+    configs_dir = Path(args.configs_dir)
+    if not configs_dir.is_dir():
+        print(f"error: configs dir '{configs_dir}' does not exist", file=sys.stderr)
+        return 1
+
+    with open(user_file, encoding="utf-8") as f:
+        user_cfg = yaml.safe_load(f) or {}
+
+    if not isinstance(user_cfg, dict):
+        print(f"error: '{user_file}' must be a yaml mapping at the top level", file=sys.stderr)
+        return 1
+
+    unknown = set(user_cfg) - set(_CONFIG_SECTIONS)
+    if unknown:
+        print(
+            f"error: unknown section(s) in user config: {sorted(unknown)}. "
+            f"Allowed: {sorted(_CONFIG_SECTIONS)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    present = [s for s in _CONFIG_SECTIONS if s in user_cfg]
+    if not present:
+        print(
+            f"error: user config has none of {sorted(_CONFIG_SECTIONS)}. Nothing to apply.",
+            file=sys.stderr,
+        )
+        return 1
+
+    verb = "Would write" if args.dry_run else "Wrote"
+    for section in present:
+        target = configs_dir / _CONFIG_SECTIONS[section]
+        body = user_cfg[section] or {}
+        rendered = yaml.safe_dump(body, sort_keys=False, default_flow_style=False)
+        if args.dry_run:
+            print(f"--- {target} ---")
+            print(rendered, end="")
+        else:
+            target.write_text(rendered, encoding="utf-8")
+        print(f"{verb} {target}", file=sys.stderr)
+
+    skipped = [s for s in _CONFIG_SECTIONS if s not in user_cfg]
+    if skipped:
+        print(f"Left untouched: {', '.join(skipped)}", file=sys.stderr)
     return 0
 
 
@@ -550,6 +666,11 @@ def main() -> None:
         sys.exit(_cmd_presets())
     elif args.command == "index":
         sys.exit(_cmd_index(args))
+    elif args.command == "config":
+        if getattr(args, "config_command", None) == "apply":
+            sys.exit(_cmd_config_apply(args))
+        parser.parse_args([args.command, "--help"])
+        sys.exit(0)
     else:
         parser.print_help()
         sys.exit(0)

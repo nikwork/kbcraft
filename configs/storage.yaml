@@ -1,0 +1,58 @@
+# kbcraft — artifact storage configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# Controls where pipeline artifacts are persisted: chunked docs, embeddings,
+# FAISS indexes, exported knowledge bases, etc.
+# Supported backends: local | s3
+# env var overrides are noted inline; they always take precedence over this file.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# Active backend — must match a key under `backends` below.   env: STORAGE_BACKEND
+active_backend: local
+
+
+backends:
+
+  local:
+    # Root directory for all artifacts.  env: STORAGE_LOCAL_ROOT
+    root: ./artifacts
+
+    # Sub-directories under root (relative paths).
+    paths:
+      chunks:     chunks          # raw chunked documents (JSON/JSONL)
+      embeddings: embeddings      # serialised embedding arrays
+      indexes:    indexes         # vector store index files (e.g. FAISS .index)
+      exports:    exports         # final knowledge-base exports
+      reports:    reports         # pipeline run reports / summaries
+
+
+  s3:
+    # boto3 session / client connection parameters.
+    # All map directly to boto3.Session() / boto3.client() kwargs.
+
+    # env: AWS_DEFAULT_REGION
+    region_name: us-east-1
+
+    # Leave blank to use IAM roles, instance profiles, or ~/.aws/credentials.
+    # env: AWS_ACCESS_KEY_ID
+    aws_access_key_id: ""
+    # env: AWS_SECRET_ACCESS_KEY
+    aws_secret_access_key: ""
+    # env: AWS_SESSION_TOKEN  (required for temporary STS credentials)
+    aws_session_token: ""
+
+    # Named profile from ~/.aws/credentials.  env: AWS_PROFILE
+    profile_name: ""
+
+    # Override endpoint for S3-compatible stores (MinIO, LocalStack, etc.).
+    # env: STORAGE_S3_ENDPOINT_URL
+    endpoint_url: ""
+
+    # boto3 TransferConfig — multipart / large-file transfer tuning.
+    # Maps to boto3.s3.transfer.TransferConfig kwargs.
+    transfer:
+      multipart_threshold:    104857600   # 100 MB — files larger than this use multipart
+      multipart_chunksize:     26214400   # 25 MB  — size of each part
+      max_concurrency:               10   # parallel upload threads per transfer
+      max_bandwidth:               null   # bytes/sec cap; null = unlimited
+      use_threads:               true

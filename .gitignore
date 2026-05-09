@@ -57,6 +57,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# kbcraft e2e script runtime output
+.e2e/
+
 # IDEs
 .vscode/
 .idea/

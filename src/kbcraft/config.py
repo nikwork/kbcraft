@@ -103,6 +103,56 @@ class EmbeddingConfig:
         return self.models[self.active_model]
 
 
+# ── Storage data models ────────────────────────────────────────────────────────
+
+
+@dataclass
+class StoragePaths:
+    chunks: str = "chunks"
+    embeddings: str = "embeddings"
+    indexes: str = "indexes"
+    exports: str = "exports"
+    reports: str = "reports"
+
+
+@dataclass
+class LocalStorageConfig:
+    root: Path
+    paths: StoragePaths
+
+
+@dataclass
+class S3TransferConfig:
+    multipart_threshold: int = 104857600   # 100 MB
+    multipart_chunksize: int = 26214400    # 25 MB
+    max_concurrency: int = 10
+    max_bandwidth: int = None
+    use_threads: bool = True
+
+
+@dataclass
+class S3StorageConfig:
+    region_name: str
+    aws_access_key_id: str
+    aws_secret_access_key: str
+    aws_session_token: str
+    profile_name: str
+    endpoint_url: str
+    transfer: S3TransferConfig
+
+
+@dataclass
+class StorageConfig:
+    active_backend: str
+    local: LocalStorageConfig
+    s3: S3StorageConfig
+
+    @property
+    def backend(self) -> "LocalStorageConfig | S3StorageConfig":
+        """Return the config for the active backend."""
+        return getattr(self, self.active_backend)
+
+
 # ── Vector store data models ───────────────────────────────────────────────────
 
 
@@ -222,6 +272,57 @@ class ConfigFactory:
             openai_compatible=openai_compatible,
             models=models,
             tokenizer=tokenizer,
+        )
+
+    def load_storage(self) -> StorageConfig:
+        """Load ``storage.yaml`` and return a fully resolved :class:`StorageConfig`.
+
+        Resolution order for every value: env var → yaml → dataclass default.
+        """
+        raw = _load_yaml(self._dir / "storage.yaml")
+        backends = raw.get("backends", {})
+
+        local_raw = backends.get("local", {})
+        paths_raw = local_raw.get("paths", {})
+        paths = StoragePaths(
+            chunks=paths_raw.get("chunks", "chunks"),
+            embeddings=paths_raw.get("embeddings", "embeddings"),
+            indexes=paths_raw.get("indexes", "indexes"),
+            exports=paths_raw.get("exports", "exports"),
+            reports=paths_raw.get("reports", "reports"),
+        )
+        local = LocalStorageConfig(
+            root=Path(_env("STORAGE_LOCAL_ROOT", local_raw.get("root", "./artifacts"))),
+            paths=paths,
+        )
+
+        s3_raw = backends.get("s3", {})
+        transfer_raw = s3_raw.get("transfer", {})
+        transfer = S3TransferConfig(
+            multipart_threshold=transfer_raw.get("multipart_threshold", 104857600),
+            multipart_chunksize=transfer_raw.get("multipart_chunksize", 26214400),
+            max_concurrency=transfer_raw.get("max_concurrency", 10),
+            max_bandwidth=transfer_raw.get("max_bandwidth"),
+            use_threads=transfer_raw.get("use_threads", True),
+        )
+        s3 = S3StorageConfig(
+            region_name=_env("AWS_DEFAULT_REGION", s3_raw.get("region_name", "us-east-1")),
+            aws_access_key_id=_env("AWS_ACCESS_KEY_ID", s3_raw.get("aws_access_key_id", "")),
+            aws_secret_access_key=_env(
+                "AWS_SECRET_ACCESS_KEY", s3_raw.get("aws_secret_access_key", "")
+            ),
+            aws_session_token=_env("AWS_SESSION_TOKEN", s3_raw.get("aws_session_token", "")),
+            profile_name=_env("AWS_PROFILE", s3_raw.get("profile_name", "")),
+            endpoint_url=_env("STORAGE_S3_ENDPOINT_URL", s3_raw.get("endpoint_url", "")),
+            transfer=transfer,
+        )
+
+        active_backend = _env("STORAGE_BACKEND", raw.get("active_backend", "local"))
+
+        return StorageConfig(
+            active_backend=active_backend,
+            local=local,
+            s3=s3,
         )
 
     def load_vector_store(self) -> VectorStoreConfig:

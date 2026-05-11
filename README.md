@@ -310,25 +310,78 @@ docker compose down
 
 ## Dev Container (VS Code Remote SSH)
 
-`docker-compose.dev.yml` provides a self-contained development environment with:
+`docker-compose.dev.yml` provides a self-contained development environment with three services:
 
-- Full project source mounted at `/app` and installed in **editable mode** — every change you save on the host is immediately visible inside the container with no rebuild.
-- All dependencies including dev tools (`pytest`, `black`, `ruff`, `mypy`, `poetry`).
-- An OpenSSH server on port **2222** with **no credentials required** (empty root password). Never expose this port to the public internet.
-- Environment variables pre-wired to the Ollama servers on the host (`host.docker.internal`).
+| Service | Container | Role |
+|---|---|---|
+| `devcontainer` | `kbcraft-dev` | Python 3.12 + Poetry + OpenSSH on port `2222`; source bind-mounted at `/app` in editable mode |
+| `minio` | `kbcraft-minio` | S3-compatible object store on `9000` (API) and `9001` (console) |
+| `s3-init` | `kbcraft-s3-init` | One-shot init that auto-creates the default `kbcraft-e2e` bucket once `minio` is healthy |
 
-### Start the dev container
+Key properties:
+
+- **Editable source** — `/app` is a bind mount of the repo, so host edits show up instantly inside the container.
+- **Persistent venv** — the project virtualenv lives in the named volume `venv-dev`, *not* the bind mount. Dependency installs survive container recreation.
+- **`.env` auto-loaded** — `env_file: .env` in compose injects every variable from `.env` (OpenAI key, Qwen3/Ollama hosts, AWS creds, …) into the container at start. A few keys are overridden in `environment:` to point at sibling services (`http://minio:9000`, `host.docker.internal` for host Ollama).
+- **Passwordless SSH on port 2222** — empty root password for VS Code Remote SSH. **Never expose port 2222 to the public internet.**
+
+### Prerequisites
+
+- Docker ≥ 24 with Compose v2
+- A `.env` file at the repo root — copy `.env.example` and fill in at least `OPENAI_API_KEY` if you plan to use the OpenAI embedder
+
+### Build & start
 
 ```bash
+# Build the image, create venv-dev volume, start dev container + minio + s3-init
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-The first run builds the image and installs all Python dependencies (~2 min).
-Subsequent starts reuse the cached image and the `venv-dev` named volume.
+The first build (~2 min) installs base + dev dependencies via `poetry install --with dev --no-root`. **Optional extras (`chroma`, `faiss`, `s3`) are not installed by the image build** — install them inside the container in one go:
 
-### Configure VS Code
+```bash
+docker exec kbcraft-dev poetry install --with dev --all-extras --no-interaction
+```
 
-Install the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension, then add this block once to your `~/.ssh/config`:
+Verify everything came up:
+
+```bash
+docker compose -f docker-compose.dev.yml ps
+# expected: kbcraft-dev (Up), kbcraft-minio (Up, healthy), kbcraft-s3-init (Exited 0)
+```
+
+> Note: `qdrant-client` and `pinecone-client` are referenced in `[tool.poetry.extras]` in `pyproject.toml` but not declared under `[tool.poetry.dependencies]`, so `--all-extras` currently installs only `chroma`, `faiss`, and `s3`.
+
+### Refresh / rebuild
+
+Pick the level of refresh you need:
+
+```bash
+# Code-only change — restart container, keep image and venv
+docker compose -f docker-compose.dev.yml restart devcontainer
+
+# Dependency change (pyproject.toml / poetry.lock) — reinstall inside the running container
+docker exec kbcraft-dev poetry install --with dev --all-extras --no-interaction
+
+# Dockerfile.dev change — rebuild image, keep venv-dev volume
+docker compose -f docker-compose.dev.yml up -d --build devcontainer
+
+# Full clean rebuild — drop the venv volume too
+docker compose -f docker-compose.dev.yml down -v
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+### Verify `.env` is loaded
+
+```bash
+docker exec kbcraft-dev env | grep -E '^(QWEN3_|OLLAMA_|OPENAI_|AWS_|STORAGE_|KBCRAFT_)' | sort
+```
+
+You should see your OpenAI key, the MinIO credentials, `STORAGE_S3_ENDPOINT_URL=http://minio:9000`, and the Ollama/Qwen3 host overrides.
+
+### Configure VS Code Remote SSH
+
+Install the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension, then add this block once to `~/.ssh/config`:
 
 ```
 Host kbcraft-dev
@@ -338,17 +391,17 @@ Host kbcraft-dev
   StrictHostKeyChecking no
 ```
 
-Open the Remote-SSH panel in VS Code (`Ctrl+Shift+P` → *Remote-SSH: Connect to Host*) and select **kbcraft-dev**. VS Code installs its server on the first connection and then opens a full remote workspace at `/app`.
+In VS Code: `Ctrl+Shift+P` → *Remote-SSH: Connect to Host* → **kbcraft-dev**. The remote workspace opens at `/app`.
 
 ### Connect via plain SSH
 
 ```bash
-ssh root@localhost -p 2222   # press Enter when asked for a password
+ssh root@localhost -p 2222   # press Enter when prompted for the password
 ```
 
 ### Run tests and tools inside the container
 
-The project `.venv` is on `PATH`, so you can call all tools directly:
+The project `.venv` is on `PATH`, so tools run directly:
 
 ```bash
 pytest                        # run the test suite
@@ -365,26 +418,20 @@ poetry run pytest
 poetry run kbcraft index ./kb --embedder ollama --output /tmp/test_idx
 ```
 
-### Ollama connectivity from the dev container
+### Service connectivity from inside the container
 
-The dev container connects to Ollama via `host.docker.internal`, which resolves to your host machine. If the main stack is already running (`docker compose up -d`), the models are available at:
+| Target | URL inside `kbcraft-dev` | Source of value |
+|---|---|---|
+| Host Ollama (default port) | `http://host.docker.internal:11434` | `OLLAMA_HOST` in compose `environment` |
+| Host Ollama (Qwen3 port) | `http://host.docker.internal:11435` | `QWEN3_HOST` in compose `environment` |
+| MinIO S3 API | `http://minio:9000` | `STORAGE_S3_ENDPOINT_URL` in compose `environment` |
+| MinIO console (host only) | `http://localhost:9001` | published port (creds `minioadmin` / `minioadmin`) |
 
-| Variable | Value |
-|---|---|
-| `OLLAMA_HOST` | `http://host.docker.internal:11434` |
-| `QWEN3_HOST` | `http://host.docker.internal:11435` |
-
-### Stop the dev container
-
-```bash
-docker compose -f docker-compose.dev.yml down
-```
-
-The `venv-dev` volume is preserved so the next start skips dependency installation. To do a full clean rebuild:
+### Stop
 
 ```bash
-docker compose -f docker-compose.dev.yml down -v
-docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.dev.yml down       # keeps venv-dev and minio-data
+docker compose -f docker-compose.dev.yml down -v    # also wipes both volumes
 ```
 
 ---

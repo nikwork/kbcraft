@@ -646,7 +646,7 @@ KBCRAFT_S3_BUCKET=kbcraft-e2e
 `OPENAI_API_KEY`. Every variable falls back to a sensible default in the
 script (`${VAR:-default}`) so a partial `.env` still works.
 
-### Run it
+### Run it (host, Bash version)
 
 ```bash
 ./scripts/e2e_faiss_s3.sh
@@ -670,6 +670,97 @@ done. minio console: http://localhost:9001  (minioadmin / minioadmin)
 Open the console at `http://localhost:9001` (creds `minioadmin` / `minioadmin`)
 to browse the bucket. The `minio-data` named volume preserves objects across
 `docker compose down` (use `down -v` to wipe).
+
+### Run it (dev container, Python version)
+
+`scripts/e2e_faiss_s3.py` is the Python port designed for the
+[**Dev Container**](#dev-container-vs-code-remote-ssh). It assumes MinIO is
+already running as a sibling compose service (so it does not call
+`docker compose up`), and it talks to the bucket at `http://minio:9000`
+instead of `http://localhost:9000`.
+
+**Prerequisites — bring the full dev stack up once:**
+
+```bash
+# 1. Ensure .env has OPENAI_API_KEY filled in
+cp -n .env.example .env && ${EDITOR:-vi} .env
+
+# 2. Build & start dev container + MinIO + bucket bootstrap
+docker compose -f docker-compose.dev.yml up -d --build
+
+# 3. Install all installable extras (chroma, faiss, s3) inside the container
+docker exec kbcraft-dev poetry install --with dev --all-extras --no-interaction
+```
+
+**Run from the host (delegates into the container):**
+
+```bash
+docker exec kbcraft-dev python /app/scripts/e2e_faiss_s3.py
+```
+
+**Run from inside the container (SSH or VS Code Remote SSH terminal):**
+
+```bash
+# After: ssh root@localhost -p 2222
+cd /app
+python scripts/e2e_faiss_s3.py
+```
+
+**Verify artifacts landed in the bucket (from the host):**
+
+```bash
+docker exec kbcraft-dev python - <<'PY'
+import os, boto3
+s3 = boto3.client(
+    "s3",
+    endpoint_url=os.environ["STORAGE_S3_ENDPOINT_URL"],
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    region_name=os.environ["AWS_DEFAULT_REGION"],
+)
+for obj in s3.list_objects_v2(Bucket="kbcraft-e2e").get("Contents", []):
+    print(f"{obj['Size']:>10}  {obj['Key']}")
+PY
+```
+
+**Override defaults via environment variables** (same names as the bash version):
+
+```bash
+docker exec \
+  -e KBCRAFT_E2E_BUCKET=my-bucket \
+  -e KBCRAFT_E2E_INDEX_NAME=v1 \
+  -e KBCRAFT_E2E_MODEL=text-embedding-3-large \
+  kbcraft-dev python /app/scripts/e2e_faiss_s3.py
+```
+
+**Reset and re-run cleanly:**
+
+```bash
+docker exec kbcraft-dev rm -rf /app/.e2e          # drop seeded docs + previous index
+docker exec kbcraft-minio sh -c 'rm -rf /data/kbcraft-e2e'   # wipe the bucket
+docker exec kbcraft-dev python /app/scripts/e2e_faiss_s3.py
+```
+
+Expected tail of the output (identical to the bash version, with the
+container-internal endpoint):
+
+```
+── 1. waiting for minio at http://minio:9000
+── 2. ensuring bucket s3://kbcraft-e2e via boto3
+     bucket exists: kbcraft-e2e
+── 3. seeding sample docs in /app/.e2e/docs
+── 4. building FAISS index with OpenAI embeddings (text-embedding-3-small)
+── 5. uploading to s3://kbcraft-e2e/ via boto3
+     uploaded s3://kbcraft-e2e/index.faiss
+     uploaded s3://kbcraft-e2e/index_chunks.json
+     uploaded s3://kbcraft-e2e/index_meta.json
+── 6. listing s3://kbcraft-e2e/ via boto3
+          12333  index.faiss
+            763  index_chunks.json
+            222  index_meta.json
+
+done. minio console: http://localhost:9001  (minioadmin / minioadmin)
+```
 
 ### Pointing at real AWS instead of MinIO
 

@@ -21,6 +21,10 @@ backends:
     base_url: http://localhost:11434/v1  # env: OPENAI_COMPATIBLE_BASE_URL
     token: ""                            # env: OPENAI_COMPATIBLE_TOKEN  (leave blank for local servers)
 
+  openai:
+    base_url: ""                         # env: OPENAI_BASE_URL  (blank = real OpenAI API)
+    token: ""                            # env: OPENAI_API_KEY
+
 
 # ── Per-model configurations ───────────────────────────────────────────────────
 # Model-intrinsic properties only: dimensions, context limit, prefixes, chunking.
@@ -92,6 +96,51 @@ models:
     chunking:
       max_tokens: 200             # tight context window — keep chunks small
       overlap: 20
+      prepend_source: true
+
+  # ── OpenAI Embeddings API models ───────────────────────────────────────────
+  # backend: openai → real OpenAI API (or set backends.openai.base_url for an
+  # OpenAI-compatible endpoint). Credentials come from OPENAI_API_KEY.
+
+  text-embedding-3-small:
+    backend: openai
+    batch_size: 100
+    embedding_dim: 1536
+    max_tokens: 8191
+    hf_repo: ""
+    query_prefix: ""
+    document_prefix: ""
+    chunking:
+      # RAG chunk size — kept well under the model's 8191-token ceiling for
+      # sharper retrieval. `max_tokens` above is the hard context limit.
+      max_tokens: 512             # env: MAX_TOKENS
+      overlap: 64                 # env: CHUNK_OVERLAP
+      prepend_source: true
+
+  text-embedding-3-large:
+    backend: openai
+    batch_size: 100
+    embedding_dim: 3072
+    max_tokens: 8191
+    hf_repo: ""
+    query_prefix: ""
+    document_prefix: ""
+    chunking:
+      max_tokens: 512
+      overlap: 64
+      prepend_source: true
+
+  text-embedding-ada-002:
+    backend: openai
+    batch_size: 100
+    embedding_dim: 1536
+    max_tokens: 8191
+    hf_repo: ""
+    query_prefix: ""
+    document_prefix: ""
+    chunking:
+      max_tokens: 512
+      overlap: 64
       prepend_source: true
 
   qwen3-embedding:0.6b:

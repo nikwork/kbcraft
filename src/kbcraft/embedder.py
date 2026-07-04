@@ -252,10 +252,23 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
             self._dim = len(self.encode(["probe"])[0])
         return self._dim
 
+    #: Retries for transient errors (429 / 5xx). Overridable via OPENAI_MAX_RETRIES.
+    #: The openai SDK applies exponential backoff between attempts.
+    _DEFAULT_MAX_RETRIES = 5
+
+    def _max_retries(self) -> int:
+        import os
+
+        raw = os.environ.get("OPENAI_MAX_RETRIES", "")
+        try:
+            return int(raw) if raw else self._DEFAULT_MAX_RETRIES
+        except ValueError:
+            return self._DEFAULT_MAX_RETRIES
+
     def _client(self):
         from openai import OpenAI
 
-        kwargs = {"api_key": self._token or "nokeyneeded"}
+        kwargs = {"api_key": self._token or "nokeyneeded", "max_retries": self._max_retries()}
         if self._base_url:
             kwargs["base_url"] = self._base_url
         return OpenAI(**kwargs)
@@ -263,7 +276,7 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
     def _async_client(self):
         from openai import AsyncOpenAI
 
-        kwargs = {"api_key": self._token or "nokeyneeded"}
+        kwargs = {"api_key": self._token or "nokeyneeded", "max_retries": self._max_retries()}
         if self._base_url:
             kwargs["base_url"] = self._base_url
         return AsyncOpenAI(**kwargs)
@@ -366,19 +379,36 @@ class TokenChunkingEmbedder(OpenAICompatibleEmbedder, ABC):
             chunks.extend(self.split_chunks(text))
         return chunks
 
-    def _batches(self, chunks: List[str]) -> Iterator[List[str]]:
-        """Yield token-budget batches of *chunks* packed greedily.
+    #: Max total tokens packed into a single embeddings request. This is the
+    #: *request* budget, distinct from :attr:`max_tokens` (the per-input context
+    #: window). OpenAI's v3 embeddings accept up to 300k tokens per request.
+    REQUEST_TOKEN_BUDGET = 300_000
+    #: Max number of inputs per embeddings request (OpenAI hard limit is 2048).
+    MAX_INPUTS_PER_REQUEST = 2048
 
-        Chunks are accumulated into each batch until the next chunk would push
-        the running token total over :attr:`max_tokens`, at which point the
-        current batch is yielded and a new one started.
+    @property
+    def request_token_budget(self) -> int:
+        """Token budget for a single embeddings request (>= :attr:`max_tokens`)."""
+        return max(self.REQUEST_TOKEN_BUDGET, self.max_tokens)
+
+    def _batches(self, chunks: List[str]) -> Iterator[List[str]]:
+        """Yield request-sized batches of *chunks* packed greedily.
+
+        Chunks are accumulated into each batch until adding the next one would
+        exceed either :attr:`request_token_budget` (total tokens) or
+        :attr:`MAX_INPUTS_PER_REQUEST` (input count), at which point the current
+        batch is yielded and a new one started. Each individual chunk already
+        fits within :attr:`max_tokens` (guaranteed by :meth:`split_chunks`), so
+        packing many per request minimises round-trips without overflowing the
+        per-input limit.
         """
-        budget = self.max_tokens
+        budget = self.request_token_budget
+        max_inputs = self.MAX_INPUTS_PER_REQUEST
         batch: List[str] = []
         batch_tokens = 0
         for chunk in chunks:
             n = self.count_tokens(chunk)
-            if batch and batch_tokens + n > budget:
+            if batch and (batch_tokens + n > budget or len(batch) >= max_inputs):
                 yield batch
                 batch = []
                 batch_tokens = 0

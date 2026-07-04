@@ -2,21 +2,30 @@
 """
 End-to-end CLI smoke test for `kbcraft index` using OpenAI embeddings.
 
-Runs the full pipeline via the CLI binary (not Python imports):
-  kbcraft index ./kb --embedder openai --model text-embedding-3-small \
-      --output <tmp>
+Runs the full pipeline via the `kbcraft` CLI binary (not Python imports), with
+all pipeline parameters resolved from the yaml config files through
+`kbcraft.config.resolve_params` — the same source of truth the shell driver
+(`test_cli_index_openai.sh`) uses, so the two stay in lockstep.
+
+  kbcraft index ./ --embedder openai --model <model> --output <tmp> ...
+  kbcraft query <tmp> ... -q "..." --json
 
 Checks:
-  1. CLI exits with code 0
-  2. index.faiss, index_chunks.json, index_meta.json are written
-  3. FAISS index loads and has the expected vector count
-  4. A smoke-test query returns ranked results
+  1. `kbcraft index` exits with code 0
+  2. <name>.faiss, <name>_chunks.json, <name>_meta.json are written
+  3. chunks.json has > 0 chunks, each with the expected fields
+  4. meta.json reports the right model / embedding_dim / total_chunks
+  5. FAISS index loads with the expected vector count / dimension
+  6. `kbcraft query --json` returns ranked, in-range, relevant results
 
 Run locally (requires OPENAI_API_KEY set or present in .env):
     python scripts/test_cli_index_openai.py
 
-Persist output to vectordb/:
-    SAVE_VECTORDB=1 python scripts/test_cli_index_openai.py
+Config resolution (each overrides the yaml; see kbcraft/config.py):
+    OPENAI_EMBEDDING_MODEL       -> active embedding model  (default: text-embedding-3-small)
+    OPENAI_EMBEDDING_MAX_TOKENS  -> chunk size in tokens    (default: from yaml)
+    KBCRAFT_TEST_SOURCE          -> corpus to index         (default: whole repo)
+    SAVE_VECTORDB=1              -> persist to the configured output dir
 """
 
 import json
@@ -32,20 +41,33 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-MAX_TOKENS = int(os.environ.get("OPENAI_EMBEDDING_MAX_TOKENS", "8191"))
-SOURCE_DIR = PROJECT_ROOT
+# Map this test's knobs onto the namespaced env vars config.py understands, then
+# let config.py resolve everything else from the yaml files.
+os.environ.setdefault(
+    "KBCRAFT_MODEL", os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+)
+if os.environ.get("OPENAI_EMBEDDING_MAX_TOKENS"):
+    os.environ["KBCRAFT_MAX_TOKENS"] = os.environ["OPENAI_EMBEDDING_MAX_TOKENS"]
 
-# When set, output is written here and NOT cleaned up after the run.
-VECTORDB_DIR = PROJECT_ROOT / "vectordb"
+from kbcraft.config import resolve_params  # noqa: E402  (after env is prepared)
+
+_params = resolve_params(PROJECT_ROOT / "configs")
+MODEL = _params["KBCRAFT_MODEL"]
+EMBEDDER = _params["KBCRAFT_EMBEDDER"]
+BASE_URL = _params["KBCRAFT_BASE_URL"]
+EXPECTED_DIM = int(_params["KBCRAFT_EMBEDDING_DIM"])
+CHUNK_SIZE = int(_params["KBCRAFT_MAX_TOKENS"])
+CHUNK_OVERLAP = int(_params["KBCRAFT_CHUNK_OVERLAP"])
+CONFIG_OUTPUT_DIR = _params["KBCRAFT_OUTPUT_DIR"]
+
+# Corpus. Defaults to the whole repo; point at a small fixture dir for cheap CI.
+SOURCE_DIR = Path(os.environ.get("KBCRAFT_TEST_SOURCE", PROJECT_ROOT))
+INDEX_NAME = "test_index_openai"
+QUERY = "how does the chunker split markdown files"
+
 SAVE_OUTPUT = os.environ.get("SAVE_VECTORDB", "").lower() in ("1", "true", "yes")
 
-# Expected embedding dims per model.
-_KNOWN_DIMS = {
-    "text-embedding-3-small": 1536,
-    "text-embedding-3-large": 3072,
-    "text-embedding-ada-002": 1536,
-}
+_BASE_URL_ARGS = ["--base-url", BASE_URL] if BASE_URL else []
 
 PASS = "  \033[32m✓\033[0m"
 FAIL = "  \033[31m✗\033[0m"
@@ -70,17 +92,29 @@ def main() -> int:
     log("\n" + "=" * 60)
     log("  kbcraft — CLI index smoke test (OpenAI Embeddings)")
     log("=" * 60)
-    log(f"  Source dir   : {SOURCE_DIR}")
-    log(f"  Model        : {MODEL}")
-    log(f"  Max tokens   : {MAX_TOKENS}")
+    log(f"  Source dir    : {SOURCE_DIR}")
+    log(f"  Embedder      : {EMBEDDER}")
+    log(f"  Model         : {MODEL}")
+    log(f"  Embedding dim : {EXPECTED_DIM}")
+    log(f"  Chunk size    : {CHUNK_SIZE}")
+    log(f"  Chunk overlap : {CHUNK_OVERLAP}")
+
+    if EMBEDDER != "openai":
+        log(
+            f"\nerror: resolved embedder is {EMBEDDER!r}, expected 'openai'. "
+            "Set OPENAI_EMBEDDING_MODEL to an OpenAI model."
+        )
+        return 1
 
     failures = 0
     if SAVE_OUTPUT:
-        VECTORDB_DIR.mkdir(parents=True, exist_ok=True)
-        output_dir = VECTORDB_DIR
+        output_dir = Path(CONFIG_OUTPUT_DIR)
+        if not output_dir.is_absolute():
+            output_dir = PROJECT_ROOT / output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
     else:
         output_dir = Path(tempfile.mkdtemp(prefix="kbcraft_openai_test_"))
-    log(f"  Output dir   : {output_dir}")
+    log(f"  Output dir    : {output_dir}")
     log(f"  Persist output: {SAVE_OUTPUT}")
 
     try:
@@ -92,9 +126,10 @@ def main() -> int:
             "index",
             str(SOURCE_DIR),
             "--embedder",
-            "openai",
+            EMBEDDER,
             "--model",
             MODEL,
+            *_BASE_URL_ARGS,
             "--lang",
             "markdown",
             "--lang",
@@ -102,13 +137,13 @@ def main() -> int:
             "--output",
             str(output_dir),
             "--name",
-            "test_index_openai",
+            INDEX_NAME,
             "--exclude",
             ".venv/**",
             "--chunk-size",
-            str(MAX_TOKENS),
+            str(CHUNK_SIZE),
             "--chunk-overlap",
-            str(MAX_TOKENS // 8),
+            str(CHUNK_OVERLAP),
         ]
         log(f"  $ {' '.join(cmd)}\n")
 
@@ -124,9 +159,9 @@ def main() -> int:
         # ── 2. Output files ────────────────────────────────────────────────────
         log_section("2. Output files")
 
-        index_file = output_dir / "test_index_openai.faiss"
-        chunks_file = output_dir / "test_index_openai_chunks.json"
-        meta_file = output_dir / "test_index_openai_meta.json"
+        index_file = output_dir / f"{INDEX_NAME}.faiss"
+        chunks_file = output_dir / f"{INDEX_NAME}_chunks.json"
+        meta_file = output_dir / f"{INDEX_NAME}_meta.json"
 
         for path in (index_file, chunks_file, meta_file):
             if not check(f"{path.name} exists", path.exists()):
@@ -147,71 +182,93 @@ def main() -> int:
 
         meta = json.loads(meta_file.read_text(encoding="utf-8"))
         failures += 0 if check(f"model == '{MODEL}'", meta.get("model") == MODEL) else 1
-
-        expected_dim = _KNOWN_DIMS.get(MODEL)
-        if expected_dim is not None:
-            failures += (
-                0
-                if check(
-                    f"embedding_dim == {expected_dim}", meta.get("embedding_dim") == expected_dim
-                )
-                else 1
-            )
-        else:
-            log(f"  (unknown model — skipping embedding_dim check)")
-
+        failures += (
+            0
+            if check(f"embedding_dim == {EXPECTED_DIM}", meta.get("embedding_dim") == EXPECTED_DIM)
+            else 1
+        )
         failures += (
             0
             if check(f"total_chunks == {len(chunks)}", meta.get("total_chunks") == len(chunks))
             else 1
         )
 
-        dim = meta.get("embedding_dim", expected_dim or 1536)
+        dim = meta.get("embedding_dim", EXPECTED_DIM)
 
         # ── 5. Load FAISS index ────────────────────────────────────────────────
         log_section("5. FAISS index")
 
         try:
             import faiss
-            import numpy as np
 
             index = faiss.read_index(str(index_file))
             failures += 0 if check(f"ntotal == {len(chunks)}", index.ntotal == len(chunks)) else 1
             failures += 0 if check(f"d == {dim}", index.d == dim) else 1
+        except ImportError:
+            log("  (faiss not available — skipping index checks)")
 
-            # ── 6. Smoke-test query ────────────────────────────────────────────
-            log_section("6. Smoke-test query")
+        # ── 6. Smoke-test query (via the CLI, JSON output) ─────────────────────
+        log_section("6. Smoke-test query")
+        log(f"  Query: '{QUERY}'")
 
-            from kbcraft.embedders.openai import OpenAIEmbedder
+        query_cmd = [
+            "kbcraft",
+            "query",
+            str(output_dir),
+            "--name",
+            INDEX_NAME,
+            "--embedder",
+            EMBEDDER,
+            "--model",
+            MODEL,
+            *_BASE_URL_ARGS,
+            "-q",
+            QUERY,
+            "-k",
+            "3",
+            "--json",
+        ]
+        q_result = subprocess.run(query_cmd, capture_output=True, text=True)
+        if q_result.stderr:
+            print(q_result.stderr, end="", file=sys.stderr)
 
-            embedder = OpenAIEmbedder(model=MODEL)
-            query = "how does the chunker split markdown files"
-            log(f"  Query: '{query}'")
+        failures += 0 if check("query exits 0", q_result.returncode == 0) else 1
 
-            q_vec = np.array(embedder.encode([query]), dtype=np.float32)
-            distances, ids = index.search(q_vec, k=3)
+        payload = json.loads(q_result.stdout) if q_result.stdout.strip() else {}
+        results = payload.get("results", [])
 
-            failures += 0 if check("search returns k=3 results", len(ids[0]) == 3) else 1
+        failures += 0 if check("query returns 3 results", payload.get("count") == 3) else 1
+        failures += (
+            0
+            if check(
+                "all result ids are valid",
+                bool(results) and all(0 <= r["id"] < len(chunks) for r in results),
+            )
+            else 1
+        )
+
+        # Relevance is meaningful only for the full-repo corpus.
+        if SOURCE_DIR == PROJECT_ROOT:
+            sources = " ".join(r.get("source", "").lower() for r in results)
             failures += (
                 0
-                if check("all result ids are valid", all(0 <= i < len(chunks) for i in ids[0]))
+                if check(
+                    "top results include a relevant source (chunker/README)",
+                    ("chunker" in sources) or ("readme" in sources),
+                )
                 else 1
             )
 
-            log("\n  Top-3 results:")
-            for rank, (dist, idx) in enumerate(zip(distances[0], ids[0]), start=1):
-                chunk = chunks[idx]
-                source = Path(chunk["source"]).name if chunk.get("source") else "?"
-                preview = chunk["text"][:80].replace("\n", " ")
-                log(f"    {rank}. [{source}] (L2={dist:.4f})")
-                log(f"       {preview!r}")
-
-        except ImportError:
-            log("  (faiss not available — skipping index and query checks)")
+        log("\n  Top-3 results:")
+        for r in results:
+            source = Path(r["source"]).name if r.get("source") else "?"
+            preview = r["preview"][:80].replace("\n", " ")
+            log(f"    {r['rank']}. [{source}] (L2={r['l2']:.4f})")
+            log(f"       {preview!r}")
 
     finally:
         if not SAVE_OUTPUT:
-            log(f"Clear destination folder: {output_dir}")
+            log(f"\nClear destination folder: {output_dir}")
             shutil.rmtree(output_dir, ignore_errors=True)
 
     # ── Summary ────────────────────────────────────────────────────────────────

@@ -286,6 +286,82 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ------------------------------------------------------------------ #
+    # query — search a previously built FAISS index                        #
+    # ------------------------------------------------------------------ #
+    query = subparsers.add_parser(
+        "query",
+        help="Search a FAISS index built by 'kbcraft index' and print ranked hits.",
+        description=(
+            "Load <NAME>.faiss + <NAME>_chunks.json from INDEX_DIR, embed the "
+            "query with the same backend used to build the index, and print the "
+            "top-k nearest chunks by L2 distance."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  # Query an index built with OpenAI embeddings\n"
+            "  kbcraft query ./my_index --name index --embedder openai \\\n"
+            "    --model text-embedding-3-small -q 'how does chunking work'\n"
+        ),
+    )
+    query.add_argument(
+        "index_dir",
+        metavar="INDEX_DIR",
+        help="Directory containing the index files.",
+    )
+    query.add_argument(
+        "-q",
+        "--query",
+        metavar="TEXT",
+        required=True,
+        help="Query text to search for.",
+    )
+    query.add_argument(
+        "--name",
+        metavar="NAME",
+        default="index",
+        help="Base filename of the index files (no extension). Default: index",
+    )
+    query.add_argument(
+        "-k",
+        "--k",
+        metavar="N",
+        type=int,
+        default=3,
+        help="Number of results to return. Default: 3.",
+    )
+    query.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit results as a JSON object on stdout (for scripts/CI).",
+    )
+    # Embedder options — must match how the index was built.
+    query.add_argument(
+        "--embedder",
+        choices=["ollama", "openai"],
+        default="ollama",
+        help="Embedding backend. Must match the index. Default: ollama.",
+    )
+    query.add_argument(
+        "--model",
+        metavar="MODEL",
+        default=None,
+        help="Model name. Must match the model used to build the index.",
+    )
+    query.add_argument(
+        "--host",
+        metavar="URL",
+        default="http://localhost:11434",
+        help="Ollama server URL. Default: http://localhost:11434",
+    )
+    query.add_argument(
+        "--base-url",
+        metavar="URL",
+        default="",
+        help="Base URL for an OpenAI-compatible endpoint. Omit for real OpenAI.",
+    )
+
     return parser
 
 
@@ -413,6 +489,75 @@ def _cmd_presets() -> int:
     return 0
 
 
+_QWEN3_VARIANTS = {"qwen3-embedding:0.6b", "qwen3-embedding:4b", "qwen3-embedding:8b"}
+_QWEN3_VARIANT_MAP = {
+    "qwen3-embedding:0.6b": "0.6b",
+    "qwen3-embedding:4b": "4b",
+    "qwen3-embedding:8b": "8b",
+}
+
+
+def _build_embedder(embedder_kind: str, model, host: str, base_url: str, api_token: str):
+    """Construct an embedder from CLI options.
+
+    Returns ``(embedder, model_name, tokenize_fn, backend_label, tokenizer_label)``.
+    Shared by the ``index`` and ``query`` commands so both resolve the backend,
+    model defaults, and tokenizer the same way.
+    """
+    model_name = model
+    tokenize_fn = None  # set below after embedder is created
+
+    if embedder_kind == "ollama":
+        from kbcraft.embedders.ollama import OllamaEmbedder
+        from kbcraft.tokenizer import get_tokenizer
+
+        model_name = model_name or "nomic-embed-text"
+        embedder = OllamaEmbedder(model=model_name, host=host)
+        tok = get_tokenizer(model_name)
+        tokenize_fn = tok.tokenize
+        backend_label = f"ollama  host={host}"
+        tokenizer_label = f"{tok.backend} ({tok.model_name})"
+
+    else:  # openai
+        if model_name in _QWEN3_VARIANTS:
+            from kbcraft.embedders.qwen import Qwen3Embedder
+
+            model_name = model_name or list(_QWEN3_VARIANTS)[0]
+            variant = _QWEN3_VARIANT_MAP[model_name]
+            embedder = Qwen3Embedder(variant=variant, base_url=base_url, token=api_token)
+            _ = embedder.tokenizer  # load now for accurate timing later
+            tokenize_fn = lambda text: embedder.tokenizer.tokenize(text)  # noqa: E731
+            tokenizer_label = f"transformers ({model_name})"
+        elif base_url:
+            from kbcraft.embedder import OpenAICompatibleEmbedder
+            from kbcraft.tokenizer import WhitespaceTokenizer
+
+            model_name = model_name or "nomic-embed-text"
+            embedder = OpenAICompatibleEmbedder(
+                model=model_name, token=api_token, base_url=base_url
+            )
+            tok = WhitespaceTokenizer(model=model_name)
+            tokenize_fn = tok.tokenize
+            tokenizer_label = "whitespace (approximate)"
+        else:
+            from kbcraft.embedders.openai import OpenAIEmbedder
+
+            model_name = model_name or "text-embedding-3-small"
+            embedder = OpenAIEmbedder(model=model_name, token=api_token)
+            # Chunk with the model's real tiktoken tokenizer so chunk token
+            # counts are exact and no chunk can overflow the model's context
+            # window (which would force the embedder to sub-split and break the
+            # one-vector-per-chunk contract). encode() returns token ids; len()
+            # of that list is the exact token count the Chunker needs.
+            _enc = embedder.tokenizer
+            tokenize_fn = lambda text: _enc.encode(text)  # noqa: E731
+            tokenizer_label = f"tiktoken ({model_name})"
+
+        backend_label = f"openai  base_url={base_url or 'https://api.openai.com/v1'}"
+
+    return embedder, model_name, tokenize_fn, backend_label, tokenizer_label
+
+
 def _cmd_index(args: argparse.Namespace) -> int:
     import json
     import os
@@ -448,59 +593,9 @@ def _cmd_index(args: argparse.Namespace) -> int:
     from kbcraft.chunker import Chunker
 
     # ── Build embedder ────────────────────────────────────────────────────────
-    _QWEN3_VARIANTS = {"qwen3-embedding:0.6b", "qwen3-embedding:4b", "qwen3-embedding:8b"}
-    _QWEN3_VARIANT_MAP = {
-        "qwen3-embedding:0.6b": "0.6b",
-        "qwen3-embedding:4b": "4b",
-        "qwen3-embedding:8b": "8b",
-    }
-
-    model_name = args.model
-    tokenize_fn = None  # set below after embedder is created
-
-    if args.embedder == "ollama":
-        from kbcraft.embedders.ollama import OllamaEmbedder
-        from kbcraft.tokenizer import get_tokenizer
-
-        model_name = model_name or "nomic-embed-text"
-        embedder = OllamaEmbedder(model=model_name, host=args.host)
-        tok = get_tokenizer(model_name)
-        tokenize_fn = tok.tokenize
-        backend_label = f"ollama  host={args.host}"
-        tokenizer_label = f"{tok.backend} ({tok.model_name})"
-
-    else:  # openai
-        if model_name in _QWEN3_VARIANTS:
-            from kbcraft.embedders.qwen import Qwen3Embedder
-
-            model_name = model_name or list(_QWEN3_VARIANTS)[0]
-            variant = _QWEN3_VARIANT_MAP[model_name]
-            embedder = Qwen3Embedder(variant=variant, base_url=args.base_url, token=api_token)
-            _ = embedder.tokenizer  # load now for accurate timing later
-            tokenize_fn = lambda text: embedder.tokenizer.tokenize(text)  # noqa: E731
-            tokenizer_label = f"transformers ({model_name})"
-        elif args.base_url:
-            from kbcraft.embedder import OpenAICompatibleEmbedder
-            from kbcraft.tokenizer import WhitespaceTokenizer
-
-            model_name = model_name or "nomic-embed-text"
-            embedder = OpenAICompatibleEmbedder(
-                model=model_name, token=api_token, base_url=args.base_url
-            )
-            tok = WhitespaceTokenizer(model=model_name)
-            tokenize_fn = tok.tokenize
-            tokenizer_label = "whitespace (approximate)"
-        else:
-            from kbcraft.embedders.openai import OpenAIEmbedder
-            from kbcraft.tokenizer import WhitespaceTokenizer
-
-            model_name = model_name or "text-embedding-3-small"
-            embedder = OpenAIEmbedder(model=model_name, token=api_token)
-            tok = WhitespaceTokenizer(model=model_name)
-            tokenize_fn = tok.tokenize
-            tokenizer_label = "whitespace (approximate)"
-
-        backend_label = f"openai  base_url={args.base_url or 'https://api.openai.com/v1'}"
+    embedder, model_name, tokenize_fn, backend_label, tokenizer_label = _build_embedder(
+        args.embedder, args.model, args.host, args.base_url, api_token
+    )
 
     log("\n" + "=" * 60)
     log("  kbcraft — build FAISS index")
@@ -576,7 +671,10 @@ def _cmd_index(args: argparse.Namespace) -> int:
 
     t0 = time.time()
     try:
-        vectors = embedder.encode(texts)
+        # encode_documents applies any document-side instruction prefix the
+        # backend defines (e.g. nomic/e5 "search_document: "); it falls back to
+        # encode() for backends without asymmetric prefixes (OpenAI).
+        vectors = embedder.encode_documents(texts)
     except Exception as exc:
         print(f"error: embedding failed: {exc}", file=sys.stderr)
         return 1
@@ -585,12 +683,18 @@ def _cmd_index(args: argparse.Namespace) -> int:
     log(f"  Done  ({elapsed:.1f}s, {len(texts) / max(elapsed, 0.001):.1f} chunks/s)")
 
     if len(vectors) != len(chunks):
-        # Qwen3Embedder may sub-chunk oversize texts, producing more vectors.
-        log(
-            f"  Note: {len(vectors)} vectors for {len(chunks)} chunks "
-            "(some chunks were further split by the tokenizer)."
+        # The pipeline's contract is one vector per chunk. A mismatch means a
+        # chunk exceeded the model's context window and the embedder sub-split
+        # it, which would misalign chunk metadata from index vectors. Chunks are
+        # sized with the model's own tokenizer to prevent this, so a mismatch
+        # here is a real error rather than something to paper over.
+        print(
+            f"error: embedder returned {len(vectors)} vectors for {len(chunks)} "
+            "chunks. A chunk exceeded the model context window and was split. "
+            "Lower --chunk-size so every chunk fits the model limit.",
+            file=sys.stderr,
         )
-        chunks = chunks[: len(vectors)]
+        return 1
 
     # ── 4. Build FAISS index ──────────────────────────────────────────────────
     log_section("4. Building FAISS index")
@@ -655,6 +759,100 @@ def _cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_query(args: argparse.Namespace) -> int:
+    import json
+    import os
+
+    api_token = os.environ.get("KBCRAFT_API_TOKEN") or os.environ.get("OPENAI_API_KEY", "")
+
+    index_dir = Path(args.index_dir)
+    index_path = index_dir / f"{args.name}.faiss"
+    chunks_path = index_dir / f"{args.name}_chunks.json"
+
+    for path in (index_path, chunks_path):
+        if not path.is_file():
+            print(f"error: '{path}' not found — build it with 'kbcraft index'", file=sys.stderr)
+            return 1
+
+    try:
+        import faiss
+        import numpy as np
+    except ImportError as exc:
+        print(f"error: {exc}\nInstall with: pip install faiss-cpu numpy", file=sys.stderr)
+        return 1
+
+    chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
+
+    embedder, model_name, _, backend_label, _ = _build_embedder(
+        args.embedder, args.model, args.host, args.base_url, api_token
+    )
+
+    index = faiss.read_index(str(index_path))
+
+    # In --json mode stdout must carry only the JSON payload, so decorative
+    # logging goes to stderr.
+    info = sys.stderr if args.json else sys.stdout
+
+    print("\n" + "=" * 60, file=info, flush=True)
+    print("  kbcraft — query FAISS index", file=info, flush=True)
+    print("=" * 60, file=info, flush=True)
+    print(f"  Index      : {index_path}", file=info, flush=True)
+    print(f"  Backend    : {backend_label}", file=info, flush=True)
+    print(f"  Model      : {model_name}", file=info, flush=True)
+    print(f"  Vectors    : {index.ntotal}", file=info, flush=True)
+    print(f"  Query      : {args.query!r}", file=info, flush=True)
+    print(f"  Top-k      : {args.k}", file=info, flush=True)
+
+    try:
+        # encode_query applies any query-side instruction prefix the backend
+        # defines (e.g. "search_query: "); falls back to encode() for OpenAI.
+        q_vec = np.array([embedder.encode_query(args.query)], dtype=np.float32)
+    except Exception as exc:
+        print(f"error: embedding query failed: {exc}", file=sys.stderr)
+        return 1
+
+    k = min(args.k, index.ntotal)
+    distances, ids = index.search(q_vec, k=k)
+
+    results = []
+    for rank, (dist, idx) in enumerate(zip(distances[0], ids[0]), start=1):
+        idx = int(idx)
+        if idx < 0 or idx >= len(chunks):
+            continue
+        chunk = chunks[idx]
+        source = chunk.get("source") or ""
+        results.append(
+            {
+                "rank": rank,
+                "id": idx,
+                "source": source,
+                "l2": float(dist),
+                "preview": chunk["text"][:200],
+            }
+        )
+
+    if args.json:
+        print(
+            json.dumps(
+                {"query": args.query, "k": k, "count": len(results), "results": results},
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return 0
+
+    print(f"\n  Top-{k} results:", flush=True)
+    for r in results:
+        name = Path(r["source"]).name if r["source"] else "?"
+        preview = r["preview"][:80].replace("\n", " ")
+        print(f"    {r['rank']}. [{name}] (L2={r['l2']:.4f})", flush=True)
+        print(f"       {preview!r}", flush=True)
+
+    # Stable machine-readable summary line for scripts/CI.
+    print(f"\n  Query returned {len(results)} result(s).", flush=True)
+    return 0
+
+
 def main() -> None:
     """Main entry point for the kbcraft CLI."""
     parser = _build_parser()
@@ -666,6 +864,8 @@ def main() -> None:
         sys.exit(_cmd_presets())
     elif args.command == "index":
         sys.exit(_cmd_index(args))
+    elif args.command == "query":
+        sys.exit(_cmd_query(args))
     elif args.command == "config":
         if getattr(args, "config_command", None) == "apply":
             sys.exit(_cmd_config_apply(args))

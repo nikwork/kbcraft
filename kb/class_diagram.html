@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kbcraft — Class Diagram</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #171d26;
+    --border: #2a3441;
+    --fg: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #4aa3ff;
+    --accent2: #7ee787;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.55;
+  }
+  header {
+    padding: 32px 40px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #131a24, #0f1419);
+  }
+  header h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.3px; }
+  header h1 code { color: var(--accent); background: none; padding: 0; }
+  header p { margin: 0; color: var(--muted); max-width: 820px; }
+  main { padding: 24px 40px 80px; max-width: 1200px; margin: 0 auto; }
+  section { margin: 40px 0; }
+  h2 {
+    font-size: 19px;
+    margin: 0 0 4px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2 .tag {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    margin-left: 8px;
+  }
+  .desc { color: var(--muted); margin: 8px 0 16px; font-size: 14px; }
+  .diagram {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    overflow-x: auto;
+  }
+  .mermaid { display: flex; justify-content: center; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: #1e2733;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin: 12px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .legend span b { color: var(--fg); font-weight: 600; }
+  footer {
+    padding: 24px 40px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+  }
+  .toc { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .toc a {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    border-radius: 20px;
+  }
+  .toc a:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1><code>kbcraft</code> — Class Diagram</h1>
+  <p>UML class model of the RAG knowledge-base pipeline: <b>select → chunk → embed → store</b>,
+     driven by layered YAML configuration. Diagrams are grouped by module. Abstract base classes
+     are marked <code>&lt;&lt;abstract&gt;&gt;</code>; dataclasses <code>&lt;&lt;dataclass&gt;&gt;</code>.</p>
+  <nav class="toc">
+    <a href="#flow">Pipeline flow</a>
+    <a href="#embedders">Embedders</a>
+    <a href="#tokenizers">Tokenizers</a>
+    <a href="#pipeline">Selection &amp; Chunking</a>
+    <a href="#config">Configuration</a>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ─────────────────────────────  PIPELINE FLOW  ───────────────────────────── -->
+  <section id="flow">
+    <h2>Pipeline flow<span class="tag">cli.py orchestrates</span></h2>
+    <p class="desc">High-level data flow of the <code>kbcraft index</code> command. Each stage maps to a module.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+flowchart LR
+    A["Project files"] --> B["FileFilter<br/><small>selector.py</small>"]
+    B --> C["Chunker<br/><small>chunker.py</small>"]
+    C --> D["Chunk[]"]
+    D --> E["BaseEmbedder<br/><small>embedder.py</small>"]
+    E --> F["float vectors"]
+    F --> G["Vector store<br/><small>FAISS / Chroma / …</small>"]
+    CF["ConfigFactory<br/><small>config.py</small>"] -. "configures" .-> C
+    CF -. "configures" .-> E
+    CF -. "configures" .-> G
+      </pre>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────  EMBEDDERS  ───────────────────────────── -->
+  <section id="embedders">
+    <h2>Embedders<span class="tag">embedder.py + embedders/</span></h2>
+    <p class="desc">
+      <code>BaseEmbedder</code> defines the contract; concrete backends plug in.
+      <code>OpenAICompatibleEmbedder</code> talks to any <code>/v1/embeddings</code> endpoint, and
+      <code>TokenChunkingEmbedder</code> adds token-aware chunking &amp; batching for
+      <code>OpenAIEmbedder</code> and <code>Qwen3Embedder</code>.
+    </p>
+    <div class="diagram">
+      <pre class="mermaid">
+classDiagram
+    direction TB
+
+    class BaseEmbedder {
+        <<abstract>>
+        +int embedding_dim*
+        +str model_name*
+        +int max_tokens
+        +encode(texts) List~List~float~~*
+        +encode_query(text) List~float~
+        +encode_documents(texts) List~List~float~~
+        +encode_hybrid(texts) HybridOutput
+        +as_chroma_ef() ChromaEmbeddingFunction
+        +as_faiss_matrix(texts)
+    }
+    class OpenAICompatibleEmbedder {
+        -str _base_url
+        -str _model
+        -str _token
+        -int _dim
+        +encode(texts) List~List~float~~
+        +encode_async(texts) List~List~float~~
+    }
+    class TokenChunkingEmbedder {
+        <<abstract>>
+        +tokenizer*
+        +count_tokens(text) int*
+        +split_chunks(text) List~str~*
+        -_expand_chunks(texts)
+        -_batches(chunks)
+    }
+    class OpenAIEmbedder {
+        -_enc  tiktoken
+        +max_tokens int
+    }
+    class Qwen3Embedder {
+        -str _variant
+        -_tok  AutoTokenizer
+    }
+    class OllamaEmbedder {
+        -str _model
+        -str _host
+        -int _batch_size
+        +encode(texts) List~List~float~~
+    }
+    class HybridOutput {
+        <<dataclass>>
+        +List~List~float~~ dense
+        +List~Dict~ sparse
+        +List~str~ texts
+    }
+    class ChromaEmbeddingFunction {
+        -BaseEmbedder _embedder
+        +__call__(input) List~List~float~~
+    }
+
+    BaseEmbedder <|-- OpenAICompatibleEmbedder
+    BaseEmbedder <|-- OllamaEmbedder
+    OpenAICompatibleEmbedder <|-- TokenChunkingEmbedder
+    TokenChunkingEmbedder <|-- OpenAIEmbedder
+    TokenChunkingEmbedder <|-- Qwen3Embedder
+    BaseEmbedder ..> HybridOutput : produces
+    BaseEmbedder ..> ChromaEmbeddingFunction : as_chroma_ef()
+    ChromaEmbeddingFunction o-- BaseEmbedder : wraps
+      </pre>
+    </div>
+    <div class="legend">
+      <span><b>&lt;|--</b> inheritance</span>
+      <span><b>o--</b> aggregation (wraps)</span>
+      <span><b>..&gt;</b> dependency (creates/produces)</span>
+      <span><b>*</b> abstract member</span>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────  TOKENIZERS  ───────────────────────────── -->
+  <section id="tokenizers">
+    <h2>Tokenizers<span class="tag">tokenizer.py</span></h2>
+    <p class="desc">
+      Interchangeable token counters injected into the <code>Chunker</code>.
+      <code>get_tokenizer()</code> is a factory that picks a backend (Ollama → HuggingFace → whitespace fallback).
+    </p>
+    <div class="diagram">
+      <pre class="mermaid">
+classDiagram
+    direction TB
+
+    class BaseTokenizer {
+        <<abstract>>
+        +str model_name*
+        +str backend*
+        +tokenize(text) List~str~*
+        +count(text) int
+        +count_batch(texts) List~int~
+        +truncate(text, max_tokens) str
+    }
+    class OllamaTokenizer {
+        +tokenize(text) List~str~
+    }
+    class HFTokenizer {
+        +tokenize(text) List~str~
+    }
+    class WhitespaceTokenizer {
+        +tokenize(text) List~str~
+    }
+    class get_tokenizer {
+        <<factory function>>
+        +get_tokenizer(...) BaseTokenizer
+    }
+
+    BaseTokenizer <|-- OllamaTokenizer
+    BaseTokenizer <|-- HFTokenizer
+    BaseTokenizer <|-- WhitespaceTokenizer
+    get_tokenizer ..> BaseTokenizer : returns
+      </pre>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────  SELECTION & CHUNKING  ───────────────────────────── -->
+  <section id="pipeline">
+    <h2>Selection &amp; Chunking<span class="tag">selector.py + chunker.py</span></h2>
+    <p class="desc">
+      <code>FileFilter</code> selects source files by language preset / glob / <code>.kbignore</code>;
+      <code>Chunker</code> splits their content into token-bounded <code>Chunk</code> objects
+      (Markdown-aware via LangChain splitters).
+    </p>
+    <div class="diagram">
+      <pre class="mermaid">
+classDiagram
+    direction LR
+
+    class FileFilter {
+        +List~str~ include_patterns
+        +List~str~ exclude_patterns
+        +from_presets(presets, exclude)$ FileFilter
+        +from_kbignore(path, ...)$ FileFilter
+        +should_include(path, root) bool
+        +collect_files(root_dir) List~Path~
+    }
+    class Chunker {
+        +int max_chunk_tokens
+        +int chunk_overlap
+        +bool prepend_source
+        +chunk_text(text, source) List~Chunk~
+        +chunk_markdown(text, source) List~Chunk~
+        +chunk_file(path, base_dir) List~Chunk~
+        +chunk_files(paths, base_dir) List~Chunk~
+    }
+    class Chunk {
+        <<dataclass>>
+        +str text
+        +str source
+        +int index
+        +int token_count
+    }
+
+    FileFilter ..> Chunker : feeds file paths
+    Chunker ..> Chunk : produces
+    Chunker o-- BaseTokenizer : tokenize (injected)
+      </pre>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────  CONFIG  ───────────────────────────── -->
+  <section id="config">
+    <h2>Configuration<span class="tag">config.py</span></h2>
+    <p class="desc">
+      <code>ConfigFactory</code> loads YAML from <code>configs/</code> (env vars override) into typed
+      dataclasses. Three trees: embedding, storage, vector-store. The <code>backend</code> / <code>model</code>
+      properties resolve the active variant.
+    </p>
+    <div class="diagram">
+      <pre class="mermaid">
+classDiagram
+    direction TB
+
+    class ConfigFactory {
+        -Path _dir
+        +from_project_root(root)$ ConfigFactory
+        +load_embedding() EmbeddingConfig
+        +load_storage() StorageConfig
+        +load_vector_store() VectorStoreConfig
+    }
+
+    class EmbeddingConfig {
+        <<dataclass>>
+        +str active_model
+        +Dict~str,ModelConfig~ models
+        +model() ModelConfig
+    }
+    class ModelConfig {
+        <<dataclass>>
+        +str name
+        +str backend
+        +int embedding_dim
+        +int max_tokens
+    }
+    class ChunkingConfig {
+        <<dataclass>>
+        +int max_tokens
+        +int overlap
+        +bool prepend_source
+    }
+    class OllamaBackendConfig {
+        <<dataclass>>
+    }
+    class OpenAICompatibleBackendConfig {
+        <<dataclass>>
+    }
+    class TokenizerConfig {
+        <<dataclass>>
+    }
+
+    class StorageConfig {
+        <<dataclass>>
+        +str active_backend
+        +backend()
+    }
+    class LocalStorageConfig {
+        <<dataclass>>
+        +Path root
+    }
+    class S3StorageConfig {
+        <<dataclass>>
+    }
+    class S3TransferConfig {
+        <<dataclass>>
+    }
+    class StoragePaths {
+        <<dataclass>>
+    }
+
+    class VectorStoreConfig {
+        <<dataclass>>
+        +str active_backend
+        +backend()
+    }
+    class FaissConfig {
+        <<dataclass>>
+    }
+    class ChromaConfig {
+        <<dataclass>>
+    }
+    class QdrantConfig {
+        <<dataclass>>
+    }
+    class PineconeConfig {
+        <<dataclass>>
+    }
+
+    ConfigFactory ..> EmbeddingConfig : builds
+    ConfigFactory ..> StorageConfig : builds
+    ConfigFactory ..> VectorStoreConfig : builds
+
+    EmbeddingConfig *-- ModelConfig
+    EmbeddingConfig *-- OllamaBackendConfig
+    EmbeddingConfig *-- OpenAICompatibleBackendConfig
+    EmbeddingConfig *-- TokenizerConfig
+    ModelConfig *-- ChunkingConfig
+
+    StorageConfig *-- LocalStorageConfig
+    StorageConfig *-- S3StorageConfig
+    LocalStorageConfig *-- StoragePaths
+    S3StorageConfig *-- S3TransferConfig
+
+    VectorStoreConfig *-- FaissConfig
+    VectorStoreConfig *-- ChromaConfig
+    VectorStoreConfig *-- QdrantConfig
+    VectorStoreConfig *-- PineconeConfig
+      </pre>
+    </div>
+    <div class="legend">
+      <span><b>*--</b> composition (owns)</span>
+      <span><b>..&gt;</b> builds</span>
+      <span><b>$</b> classmethod / static</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  Generated from <code>src/kbcraft/</code> · Rendered with
+  <a href="https://mermaid.js.org" style="color:var(--accent)">Mermaid</a> (loaded from CDN — requires internet on first view).
+  Note: <code>vector_stores/*</code> backends are currently stubs and are shown conceptually in the flow diagram.
+</footer>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    themeVariables: {
+      primaryColor: "#1e2733",
+      primaryTextColor: "#e6edf3",
+      primaryBorderColor: "#4aa3ff",
+      lineColor: "#8b98a9",
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+    }
+  });
+</script>
+</body>
+</html>

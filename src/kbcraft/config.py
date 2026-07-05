@@ -47,6 +47,20 @@ def _env(key: str, default=None):
     return val if val else default
 
 
+def _env_ns(name: str, *aliases: str, default=None):
+    """Resolve a config value from ``KBCRAFT_<NAME>`` first, then legacy aliases.
+
+    Generic names like ``MODEL`` / ``OUTPUT_DIR`` collide with unrelated tooling,
+    so the ``KBCRAFT_``-prefixed form takes precedence. Bare *aliases* (e.g.
+    ``"MODEL"``) remain supported for backward compatibility.
+    """
+    for key in (f"KBCRAFT_{name}", *aliases):
+        val = os.environ.get(key, "")
+        if val:
+            return val
+    return default
+
+
 # ── Embedding data models ──────────────────────────────────────────────────────
 
 
@@ -84,6 +98,12 @@ class OpenAICompatibleBackendConfig:
 
 
 @dataclass
+class OpenAIBackendConfig:
+    base_url: str
+    token: str
+
+
+@dataclass
 class TokenizerConfig:
     prefer_ollama: bool = False
     hf_fallback_repo: str = "bert-base-uncased"
@@ -94,6 +114,7 @@ class EmbeddingConfig:
     active_model: str
     ollama: OllamaBackendConfig
     openai_compatible: OpenAICompatibleBackendConfig
+    openai: OpenAIBackendConfig
     models: Dict[str, ModelConfig]
     tokenizer: TokenizerConfig
 
@@ -101,6 +122,30 @@ class EmbeddingConfig:
     def model(self) -> ModelConfig:
         """Return the active :class:`ModelConfig`."""
         return self.models[self.active_model]
+
+    #: Model backend name → the CLI ``--embedder`` value it maps to.
+    _EMBEDDER_FOR_BACKEND = {
+        "ollama": "ollama",
+        "openai": "openai",
+        "openai_compatible": "openai",
+    }
+
+    @property
+    def embedder(self) -> str:
+        """CLI ``--embedder`` value for the active model's backend."""
+        return self._EMBEDDER_FOR_BACKEND.get(self.model.backend, self.model.backend)
+
+    @property
+    def base_url(self) -> str:
+        """Base URL for the active model's backend (empty for the real OpenAI API)."""
+        backend = self.model.backend
+        if backend == "openai":
+            return self.openai.base_url
+        if backend == "openai_compatible":
+            return self.openai_compatible.base_url
+        if backend == "ollama":
+            return self.ollama.host
+        return ""
 
 
 # ── Storage data models ────────────────────────────────────────────────────────
@@ -123,8 +168,8 @@ class LocalStorageConfig:
 
 @dataclass
 class S3TransferConfig:
-    multipart_threshold: int = 104857600   # 100 MB
-    multipart_chunksize: int = 26214400    # 25 MB
+    multipart_threshold: int = 104857600  # 100 MB
+    multipart_chunksize: int = 26214400  # 25 MB
     max_concurrency: int = 10
     max_bandwidth: int = None
     use_threads: bool = True
@@ -245,6 +290,12 @@ class ConfigFactory:
             token=_env("OPENAI_COMPATIBLE_TOKEN", oac_raw.get("token", "")),
         )
 
+        openai_raw = raw.get("backends", {}).get("openai", {})
+        openai = OpenAIBackendConfig(
+            base_url=_env("OPENAI_BASE_URL", openai_raw.get("base_url", "")),
+            token=_env("OPENAI_API_KEY", openai_raw.get("token", "")),
+        )
+
         tok_raw = raw.get("tokenizer", {})
         tokenizer = TokenizerConfig(
             prefer_ollama=tok_raw.get("prefer_ollama", False),
@@ -253,7 +304,7 @@ class ConfigFactory:
 
         models = {name: self._parse_model(name, cfg) for name, cfg in raw.get("models", {}).items()}
 
-        active_model = _env("MODEL", raw.get("active_model"))
+        active_model = _env_ns("MODEL", "MODEL", default=raw.get("active_model"))
         if active_model not in models:
             raise KeyError(
                 f"Model {active_model!r} not found in embedding.yaml. " f"Available: {list(models)}"
@@ -261,15 +312,24 @@ class ConfigFactory:
 
         # Apply chunking env var overrides to the active model only
         active = models[active_model]
-        if _env("MAX_TOKENS"):
-            active.chunking.max_tokens = int(_env("MAX_TOKENS"))
-        if _env("CHUNK_OVERLAP"):
-            active.chunking.overlap = int(_env("CHUNK_OVERLAP"))
+        max_tokens_override = _env_ns("MAX_TOKENS", "MAX_TOKENS")
+        if max_tokens_override:
+            active.chunking.max_tokens = int(max_tokens_override)
+        overlap_override = _env_ns("CHUNK_OVERLAP", "CHUNK_OVERLAP")
+        if overlap_override:
+            active.chunking.overlap = int(overlap_override)
+
+        # Keep the Chunker invariant (0 <= overlap < max_tokens). An independent
+        # max_tokens override can otherwise leave overlap >= max_tokens, which
+        # makes Chunker.__init__ raise. Clamp to a sane fraction rather than crash.
+        if active.chunking.overlap >= active.chunking.max_tokens:
+            active.chunking.overlap = max(0, active.chunking.max_tokens // 8)
 
         return EmbeddingConfig(
             active_model=active_model,
             ollama=ollama,
             openai_compatible=openai_compatible,
+            openai=openai,
             models=models,
             tokenizer=tokenizer,
         )
@@ -331,7 +391,9 @@ class ConfigFactory:
         backends = raw.get("backends", {})
 
         faiss_raw = backends.get("faiss", {})
-        output_dir = Path(_env("OUTPUT_DIR", faiss_raw.get("output_dir", "faiss_index")))
+        output_dir = Path(
+            _env_ns("OUTPUT_DIR", "OUTPUT_DIR", default=faiss_raw.get("output_dir", "faiss_index"))
+        )
         ivf = faiss_raw.get("ivf", {})
         faiss = FaissConfig(
             index_type=faiss_raw.get("index_type", "flat_l2"),
@@ -388,3 +450,80 @@ class ConfigFactory:
             chunking=chunking,
             hybrid=raw.get("hybrid", False),
         )
+
+
+# ── Shell-env emitter ────────────────────────────────────────────────────────
+#
+# Resolve the configs and print ``KBCRAFT_*`` shell assignments so bash scripts
+# can source every pipeline parameter from the yaml files instead of hardcoding
+# them. Consumed by scripts/test_cli_index_openai.sh via:
+#
+#     eval "$(python -m kbcraft.config env --configs-dir configs)"
+
+
+def resolve_params(configs_dir: Path) -> Dict[str, str]:
+    """Resolve embedding + vector store configs into a flat KEY→str map.
+
+    Every value already reflects the env → yaml → default resolution done by
+    :class:`ConfigFactory`, so callers see the same params the pipeline will use.
+    """
+    factory = ConfigFactory(configs_dir)
+    emb = factory.load_embedding()
+    vs = factory.load_vector_store()
+
+    model = emb.model
+    output_dir = vs.faiss.output_dir
+
+    return {
+        "KBCRAFT_MODEL": model.name,
+        "KBCRAFT_BACKEND": model.backend,
+        "KBCRAFT_EMBEDDER": emb.embedder,
+        "KBCRAFT_BASE_URL": emb.base_url,
+        "KBCRAFT_EMBEDDING_DIM": str(model.embedding_dim),
+        "KBCRAFT_MAX_TOKENS": str(model.chunking.max_tokens),
+        "KBCRAFT_CHUNK_OVERLAP": str(model.chunking.overlap),
+        "KBCRAFT_VECTOR_BACKEND": vs.active_backend,
+        "KBCRAFT_OUTPUT_DIR": str(output_dir),
+    }
+
+
+def _emit_env(configs_dir: Path) -> int:
+    import shlex
+
+    params = resolve_params(configs_dir)
+    for key, value in params.items():
+        print(f"{key}={shlex.quote(value)}")
+    return 0
+
+
+def main(argv=None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m kbcraft.config",
+        description="Resolve kbcraft yaml configs and emit them for other tools.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    env = sub.add_parser(
+        "env",
+        help="Print resolved params as KBCRAFT_*=value lines for `eval` in shell.",
+    )
+    env.add_argument(
+        "--configs-dir",
+        metavar="DIR",
+        default="configs",
+        help="Directory holding embedding.yaml / vector_store.yaml. Default: ./configs",
+    )
+
+    args = parser.parse_args(argv)
+    if args.command == "env":
+        return _emit_env(Path(args.configs_dir))
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

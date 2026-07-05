@@ -60,6 +60,18 @@ CHUNK_SIZE = int(_params["KBCRAFT_MAX_TOKENS"])
 CHUNK_OVERLAP = int(_params["KBCRAFT_CHUNK_OVERLAP"])
 CONFIG_OUTPUT_DIR = _params["KBCRAFT_OUTPUT_DIR"]
 
+# S3 export params come straight from the S3_* env vars (.env) — the single
+# source of truth. Secrets stay in env/config; the boto3 exporter reads them.
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT_URL", "")
+S3_HAS_CREDENTIALS = bool(
+    (os.environ.get("S3_ACCESS_KEY_ID") and os.environ.get("S3_SECRET_ACCESS_KEY"))
+    or os.environ.get("S3_PROFILE")
+)
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIGS_DIR = PROJECT_ROOT / "configs"
+
 # Corpus. Defaults to the whole repo; point at a small fixture dir for cheap CI.
 SOURCE_DIR = Path(os.environ.get("KBCRAFT_TEST_SOURCE", PROJECT_ROOT))
 INDEX_NAME = "test_index_openai"
@@ -98,6 +110,8 @@ def main() -> int:
     log(f"  Embedding dim : {EXPECTED_DIM}")
     log(f"  Chunk size    : {CHUNK_SIZE}")
     log(f"  Chunk overlap : {CHUNK_OVERLAP}")
+    log(f"  S3 bucket     : {S3_BUCKET or '<none configured>'}")
+    log(f"  S3 endpoint   : {S3_ENDPOINT or '<aws default>'}")
 
     if EMBEDDER != "openai":
         log(
@@ -265,6 +279,39 @@ def main() -> int:
             preview = r["preview"][:80].replace("\n", " ")
             log(f"    {r['rank']}. [{source}] (L2={r['l2']:.4f})")
             log(f"       {preview!r}")
+
+        # ── 7. Export FAISS index to S3 (config + boto3) ───────────────────────
+        log_section("7. Export FAISS index to S3")
+
+        if not S3_BUCKET or not S3_HAS_CREDENTIALS:
+            log("  (no S3 bucket/credentials in .env — skipping real S3 export)")
+            log("  enable it by setting S3_BUCKET + S3_ACCESS_KEY_ID/")
+            log("  S3_SECRET_ACCESS_KEY (or S3_PROFILE) in .env, or configs/storage.yaml")
+        else:
+            log(f"  Bucket   : {S3_BUCKET}")
+            log(f"  Endpoint : {S3_ENDPOINT or '<aws default>'}\n")
+
+            exporter = [sys.executable, str(SCRIPT_DIR / "s3_export.py")]
+            configs_args = ["--configs-dir", str(CONFIGS_DIR)]
+
+            ensure_rc = subprocess.run([*exporter, "ensure-bucket", *configs_args]).returncode
+            failures += 0 if check(f"bucket '{S3_BUCKET}' exists or created", ensure_rc == 0) else 1
+
+            upload_rc = subprocess.run(
+                [*exporter, "upload", *configs_args, "--dir", str(output_dir), "--name", INDEX_NAME]
+            ).returncode
+            failures += 0 if check("uploaded index artifacts to S3", upload_rc == 0) else 1
+
+            # ── 8. Verify S3 contents (config + boto3) ─────────────────────────
+            log_section("8. Verify S3 contents")
+            verify_rc = subprocess.run(
+                [*exporter, "verify", *configs_args, "--name", INDEX_NAME]
+            ).returncode
+            failures += (
+                0
+                if check(f"all 3 artifacts present + non-empty in s3://{S3_BUCKET}", verify_rc == 0)
+                else 1
+            )
 
     finally:
         if not SAVE_OUTPUT:

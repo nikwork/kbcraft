@@ -35,10 +35,10 @@ INDEX_NAME="${KBCRAFT_E2E_INDEX_NAME:-index}"
 MODEL="${KBCRAFT_E2E_MODEL:-text-embedding-3-small}"
 
 # MinIO defaults match the env block in docker-compose.dev.yml.
-export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-minioadmin}"
-export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-minioadmin}"
-export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
-export STORAGE_S3_ENDPOINT_URL="${STORAGE_S3_ENDPOINT_URL:-http://localhost:9000}"
+export S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID:-minioadmin}"
+export S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY:-minioadmin}"
+export S3_REGION="${S3_REGION:-us-east-1}"
+export S3_ENDPOINT_URL="${S3_ENDPOINT_URL:-http://localhost:9000}"
 
 # ── checks ────────────────────────────────────────────────────────────────────
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
@@ -59,10 +59,10 @@ fi
 echo "── 1. starting minio (docker compose -f docker-compose.dev.yml)"
 docker compose -f "${ROOT}/docker-compose.dev.yml" up -d minio
 
-echo "     waiting for minio at ${STORAGE_S3_ENDPOINT_URL} …"
+echo "     waiting for minio at ${S3_ENDPOINT_URL} …"
 ready=0
 for _ in $(seq 1 30); do
-  if curl -fs "${STORAGE_S3_ENDPOINT_URL}/minio/health/ready" >/dev/null 2>&1; then
+  if curl -fs "${S3_ENDPOINT_URL}/minio/health/ready" >/dev/null 2>&1; then
     ready=1; break
   fi
   sleep 1
@@ -84,10 +84,10 @@ from botocore.exceptions import ClientError
 bucket = os.environ["BUCKET"]
 s3 = boto3.client(
     "s3",
-    endpoint_url=os.environ["STORAGE_S3_ENDPOINT_URL"],
-    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    region_name=os.environ["AWS_DEFAULT_REGION"],
+    endpoint_url=os.environ["S3_ENDPOINT_URL"],
+    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
+    region_name=os.environ["S3_REGION"],
 )
 try:
     s3.head_bucket(Bucket=bucket)
@@ -151,10 +151,10 @@ name = os.environ["INDEX_NAME"]
 
 s3 = boto3.client(
     "s3",
-    endpoint_url=os.environ["STORAGE_S3_ENDPOINT_URL"],
-    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    region_name=os.environ["AWS_DEFAULT_REGION"],
+    endpoint_url=os.environ["S3_ENDPOINT_URL"],
+    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
+    region_name=os.environ["S3_REGION"],
 )
 files = [f"{name}.faiss", f"{name}_chunks.json", f"{name}_meta.json"]
 for fname in files:
@@ -177,10 +177,10 @@ import boto3
 
 s3 = boto3.client(
     "s3",
-    endpoint_url=os.environ["STORAGE_S3_ENDPOINT_URL"],
-    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    region_name=os.environ["AWS_DEFAULT_REGION"],
+    endpoint_url=os.environ["S3_ENDPOINT_URL"],
+    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
+    region_name=os.environ["S3_REGION"],
 )
 resp = s3.list_objects_v2(Bucket=os.environ["BUCKET"])
 for obj in resp.get("Contents", []):

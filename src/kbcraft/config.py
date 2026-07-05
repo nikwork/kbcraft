@@ -177,12 +177,13 @@ class S3TransferConfig:
 
 @dataclass
 class S3StorageConfig:
-    region_name: str
-    aws_access_key_id: str
-    aws_secret_access_key: str
-    aws_session_token: str
-    profile_name: str
+    region: str
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+    profile: str
     endpoint_url: str
+    bucket: str
     transfer: S3TransferConfig
 
 
@@ -366,14 +367,13 @@ class ConfigFactory:
             use_threads=transfer_raw.get("use_threads", True),
         )
         s3 = S3StorageConfig(
-            region_name=_env("AWS_DEFAULT_REGION", s3_raw.get("region_name", "us-east-1")),
-            aws_access_key_id=_env("AWS_ACCESS_KEY_ID", s3_raw.get("aws_access_key_id", "")),
-            aws_secret_access_key=_env(
-                "AWS_SECRET_ACCESS_KEY", s3_raw.get("aws_secret_access_key", "")
-            ),
-            aws_session_token=_env("AWS_SESSION_TOKEN", s3_raw.get("aws_session_token", "")),
-            profile_name=_env("AWS_PROFILE", s3_raw.get("profile_name", "")),
-            endpoint_url=_env("STORAGE_S3_ENDPOINT_URL", s3_raw.get("endpoint_url", "")),
+            region=_env("S3_REGION", s3_raw.get("region", "us-east-1")),
+            access_key_id=_env("S3_ACCESS_KEY_ID", s3_raw.get("access_key_id", "")),
+            secret_access_key=_env("S3_SECRET_ACCESS_KEY", s3_raw.get("secret_access_key", "")),
+            session_token=_env("S3_SESSION_TOKEN", s3_raw.get("session_token", "")),
+            profile=_env("S3_PROFILE", s3_raw.get("profile", "")),
+            endpoint_url=_env("S3_ENDPOINT_URL", s3_raw.get("endpoint_url", "")),
+            bucket=_env("S3_BUCKET", s3_raw.get("bucket", "")),
             transfer=transfer,
         )
 
@@ -474,6 +474,10 @@ def resolve_params(configs_dir: Path) -> Dict[str, str]:
     model = emb.model
     output_dir = vs.faiss.output_dir
 
+    # S3 params are intentionally NOT emitted here — they live solely as the
+    # ``S3_*`` env vars in .env (read directly by scripts and by
+    # ConfigFactory.load_storage / the boto3 exporter). Re-emitting them under
+    # ``KBCRAFT_*`` names would just duplicate that single source of truth.
     return {
         "KBCRAFT_MODEL": model.name,
         "KBCRAFT_BACKEND": model.backend,

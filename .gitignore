@@ -84,3 +84,6 @@ qdrant_data/
 
 vectordb/*
 !vectordb/.gitkeep
+
+# Generated FAISS index output (default --output dir for the smoke tests)
+faiss_index/

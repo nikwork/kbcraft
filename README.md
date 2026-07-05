@@ -377,7 +377,7 @@ docker compose -f docker-compose.dev.yml up -d --build
 docker exec kbcraft-dev env | grep -E '^(QWEN3_|OLLAMA_|OPENAI_|AWS_|STORAGE_|KBCRAFT_)' | sort
 ```
 
-You should see your OpenAI key, the MinIO credentials, `STORAGE_S3_ENDPOINT_URL=http://minio:9000`, and the Ollama/Qwen3 host overrides.
+You should see your OpenAI key, the MinIO credentials, `S3_ENDPOINT_URL=http://minio:9000`, and the Ollama/Qwen3 host overrides.
 
 ### Configure VS Code Remote SSH
 
@@ -424,7 +424,7 @@ poetry run kbcraft index ./kb --embedder ollama --output /tmp/test_idx
 |---|---|---|
 | Host Ollama (default port) | `http://host.docker.internal:11434` | `OLLAMA_HOST` in compose `environment` |
 | Host Ollama (Qwen3 port) | `http://host.docker.internal:11435` | `QWEN3_HOST` in compose `environment` |
-| MinIO S3 API | `http://minio:9000` | `STORAGE_S3_ENDPOINT_URL` in compose `environment` |
+| MinIO S3 API | `http://minio:9000` | `S3_ENDPOINT_URL` in compose `environment` |
 | MinIO console (host only) | `http://localhost:9001` | published port (creds `minioadmin` / `minioadmin`) |
 
 ### Stop
@@ -634,12 +634,12 @@ idempotent — the bucket and named volume are reused.
 OPENAI_API_KEY=sk-...
 
 # S3 / MinIO connection — defaults match docker-compose.dev.yml
-AWS_ACCESS_KEY_ID=minioadmin
-AWS_SECRET_ACCESS_KEY=minioadmin
-AWS_DEFAULT_REGION=us-east-1
-STORAGE_S3_ENDPOINT_URL=http://localhost:9000
+S3_ACCESS_KEY_ID=minioadmin
+S3_SECRET_ACCESS_KEY=minioadmin
+S3_REGION=us-east-1
+S3_ENDPOINT_URL=http://localhost:9000
 STORAGE_BACKEND=s3
-KBCRAFT_S3_BUCKET=kbcraft-e2e
+S3_BUCKET=kbcraft-e2e
 ```
 
 `.env.example` ships with the same block — copy it to `.env` and fill in
@@ -713,10 +713,10 @@ docker exec kbcraft-dev python - <<'PY'
 import os, boto3
 s3 = boto3.client(
     "s3",
-    endpoint_url=os.environ["STORAGE_S3_ENDPOINT_URL"],
-    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    region_name=os.environ["AWS_DEFAULT_REGION"],
+    endpoint_url=os.environ["S3_ENDPOINT_URL"],
+    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
+    region_name=os.environ["S3_REGION"],
 )
 for obj in s3.list_objects_v2(Bucket="kbcraft-e2e").get("Contents", []):
     print(f"{obj['Size']:>10}  {obj['Key']}")
@@ -768,11 +768,11 @@ The script doesn't hardcode an endpoint — change four `.env` variables and
 re-run:
 
 ```bash
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=...
-AWS_DEFAULT_REGION=us-west-2
-STORAGE_S3_ENDPOINT_URL=          # leave blank → boto3 hits real AWS
-KBCRAFT_S3_BUCKET=my-real-bucket
+S3_ACCESS_KEY_ID=AKIA...
+S3_SECRET_ACCESS_KEY=...
+S3_REGION=us-west-2
+S3_ENDPOINT_URL=          # leave blank → boto3 hits real AWS
+S3_BUCKET=my-real-bucket
 ```
 
 You can skip step 1 (no MinIO needed) by exporting `SKIP_COMPOSE=1` and

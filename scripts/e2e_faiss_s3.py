@@ -70,10 +70,10 @@ SAVE_OUTPUT = os.environ.get("SAVE_VECTORDB", "").lower() in ("1", "true", "yes"
 # MinIO defaults match docker-compose.dev.yml. Inside the dev container the
 # sibling host is "minio"; from the host it's "localhost". Whichever value is
 # already set in the environment wins.
-AWS_ACCESS_KEY_ID = os.environ.setdefault("AWS_ACCESS_KEY_ID", "minioadmin")
-AWS_SECRET_ACCESS_KEY = os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "minioadmin")
-AWS_DEFAULT_REGION = os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
-S3_ENDPOINT = os.environ.setdefault("STORAGE_S3_ENDPOINT_URL", "http://minio:9000")
+S3_ACCESS_KEY_ID = os.environ.setdefault("S3_ACCESS_KEY_ID", "minioadmin")
+S3_SECRET_ACCESS_KEY = os.environ.setdefault("S3_SECRET_ACCESS_KEY", "minioadmin")
+S3_REGION = os.environ.setdefault("S3_REGION", "us-east-1")
+S3_ENDPOINT = os.environ.setdefault("S3_ENDPOINT_URL", "http://minio:9000")
 
 
 PASS = "  \033[32m✓\033[0m"
@@ -115,9 +115,9 @@ def s3_client():
     return boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_DEFAULT_REGION,
+        aws_access_key_id=S3_ACCESS_KEY_ID,
+        aws_secret_access_key=S3_SECRET_ACCESS_KEY,
+        region_name=S3_REGION,
     )
 
 

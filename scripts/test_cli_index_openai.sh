@@ -22,6 +22,14 @@
 #   4. meta.json reports the right model / embedding_dim / total_chunks
 #   5. FAISS index reports the expected vector count + dimension
 #   6. `kbcraft query` returns ranked results
+#   7. the FAISS index + sidecars are exported to S3 (real upload, boto3)
+#   8. all three artifacts are present + non-empty in the S3 bucket
+#
+# Steps 7-8 use the S3 connection params resolved from configs/storage.yaml
+# (endpoint, region, credentials, bucket, transfer tuning) and boto3 to perform
+# the real upload — see scripts/s3_export.py. They are skipped automatically
+# when no bucket / credentials are configured, so the smoke test still passes
+# without an S3 target.
 #
 # Run locally (requires OPENAI_API_KEY set or present in .env):
 #     ./scripts/test_cli_index_openai.sh
@@ -32,6 +40,9 @@
 #   CHUNK_OVERLAP                -> chunk overlap in tokens     (default: from yaml)
 #   OUTPUT_DIR                   -> persisted index dir         (default: from vector_store.yaml)
 #   SAVE_VECTORDB=1              -> persist to OUTPUT_DIR instead of a temp dir
+#   S3_BUCKET                    -> target bucket for export     (default: from storage.yaml)
+#   S3_ENDPOINT_URL              -> S3 endpoint (MinIO/LocalStack/cloud)
+#   S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY (or S3_PROFILE) -> credentials
 
 set -uo pipefail
 
@@ -128,6 +139,18 @@ CHUNK_SIZE="${KBCRAFT_MAX_TOKENS}"
 OVERLAP="${KBCRAFT_CHUNK_OVERLAP}"
 CONFIG_OUTPUT_DIR="${KBCRAFT_OUTPUT_DIR}"
 
+# S3 export params come straight from the S3_* env vars (.env) — the single
+# source of truth. boto3 credentials never leave .env / config.
+S3_BUCKET="${S3_BUCKET:-}"
+S3_ENDPOINT="${S3_ENDPOINT_URL:-}"
+# S3 export is possible when a bucket + some credential (static keys or a
+# named profile) are configured.
+if [[ -n "${S3_BUCKET}" ]] && { { [[ -n "${S3_ACCESS_KEY_ID:-}" ]] && [[ -n "${S3_SECRET_ACCESS_KEY:-}" ]]; } || [[ -n "${S3_PROFILE:-}" ]]; }; then
+  S3_HAS_CREDS=1
+else
+  S3_HAS_CREDS=0
+fi
+
 # Source corpus. Defaults to the whole repo (a realistic, if costly, smoke
 # test). Set KBCRAFT_TEST_SOURCE to a small fixture dir to keep CI cheap/fast.
 SOURCE_DIR="${KBCRAFT_TEST_SOURCE:-${ROOT}}"
@@ -151,6 +174,8 @@ log "  Model         : ${MODEL}"
 log "  Embedding dim : ${EXPECTED_DIM}"
 log "  Chunk size    : ${CHUNK_SIZE}"
 log "  Chunk overlap : ${OVERLAP}"
+log "  S3 bucket     : ${S3_BUCKET:-<none configured>}"
+log "  S3 endpoint   : ${S3_ENDPOINT:-<aws default>}"
 
 if [[ "${SAVE_OUTPUT}" -eq 1 ]]; then
   OUTPUT_DIR="${CONFIG_OUTPUT_DIR}"
@@ -288,6 +313,35 @@ if [[ "${SOURCE_DIR}" == "${ROOT}" ]]; then
   RELEVANT=1
   printf '%s\n' "${TOP_SOURCES}" | grep -qiE 'chunker|readme' && RELEVANT=0
   check "top results include a relevant source (chunker/README)" "${RELEVANT}"
+fi
+
+# ── 7. Export FAISS index to S3 (config + boto3) ────────────────────────────
+log_section "7. Export FAISS index to S3"
+
+if [[ -z "${S3_BUCKET}" || "${S3_HAS_CREDS}" != "1" ]]; then
+  log "  (no S3 bucket/credentials in .env — skipping real S3 export)"
+  log "  enable it by setting S3_BUCKET + S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY"
+  log "  (or S3_PROFILE) in .env, or configuring them in configs/storage.yaml"
+else
+  log "  Bucket   : ${S3_BUCKET}"
+  log "  Endpoint : ${S3_ENDPOINT:-<aws default>}"
+  log ""
+
+  python "${HERE}/s3_export.py" ensure-bucket --configs-dir "${CONFIGS_DIR}"
+  check "bucket '${S3_BUCKET}' exists or created" "$?"
+
+  python "${HERE}/s3_export.py" upload \
+    --configs-dir "${CONFIGS_DIR}" \
+    --dir "${OUTPUT_DIR}" \
+    --name "${INDEX_NAME}"
+  check "uploaded index artifacts to s3://${S3_BUCKET}" "$?"
+
+  # ── 8. Verify S3 contents (config + boto3) ────────────────────────────────
+  log_section "8. Verify S3 contents"
+  python "${HERE}/s3_export.py" verify \
+    --configs-dir "${CONFIGS_DIR}" \
+    --name "${INDEX_NAME}"
+  check "all 3 artifacts present + non-empty in s3://${S3_BUCKET}" "$?"
 fi
 
 # ── Summary ─────────────────────────────────────────────────────────────────
